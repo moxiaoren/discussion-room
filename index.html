@@ -303,7 +303,7 @@ const AI = {
       if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3)}; }
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
       return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4)};
-    }catch(e){ console.warn('deepseek summarize fail', e); return this._mockSummarize(text); }
+    }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text); }
   },
   async comment(text){
     if(!this._hasKey()) return this._mockComment(text);
@@ -314,7 +314,7 @@ const AI = {
       const m=out.match(/\{[\s\S]*\}/);
       if(m){ const j=JSON.parse(m[0]); return {style:j.style==='off'?'off':'good', text:String(j.text||'')}; }
       return {style:'good', text:(out||'').slice(0,40)||'这一段表达清晰。'};
-    }catch(e){ console.warn('deepseek comment fail', e); return this._mockComment(text); }
+    }catch(e){ console.warn('deepseek comment fail', e); showAiErr('点评：'+(e&&e.message||e)); return this._mockComment(text); }
   }
 };
 
@@ -482,6 +482,7 @@ function spawnDanmaku(text){
   setTimeout(()=>d.remove(), 7000);
 }
 async function genSummary(msg){
+  if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
     const res=await AI.summarize(msg.content);
@@ -496,6 +497,7 @@ async function genSummary(msg){
 async function redoSummary(msgId){
   const msg=S.messages.find(m=>m.id===msgId);
   const sm=S.summaries.find(x=>x.messageId===msgId); if(!sm||!msg) return;
+  if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   // 合并该段原文+所有补充
   const full = S.messages.filter(m=>m.appendTo===msgId).map(m=>m.content);
   const text = msg.content + (full.length?'（补充：'+full.join('；')+'）':'');
@@ -630,7 +632,7 @@ async function ensureVerdict(){
       '你是两人讨论结束后的复盘者。请基于完整对话写一段综合点评（200字内、中文）：概括讨论主题、双方观点、共识与分歧、值得继续深挖的方向。',
       '讨论主题：'+(S.topic||'未命名')+'\n\n对话记录：\n'+(msgs.join('\n')||'（无讨论消息）'));
     S.verdict=out.trim();
-  }catch(e){ console.warn('deepseek verdict fail',e); S.verdict=null; }
+  }catch(e){ console.warn('deepseek verdict fail',e); showAiErr('总评：'+(e&&e.message||e)); S.verdict=null; }
 }
 document.querySelectorAll('.rnav-btn').forEach(b=>b.onclick=()=>{
   rvTab=b.dataset.rv;
@@ -866,6 +868,17 @@ bc.onmessage=(e)=>{
 
 
 // 初始化：加载 AI Key 状态
+function showAiErr(msg){
+  let el=document.getElementById('aiErr');
+  if(!el){
+    el=document.createElement('div'); el.id='aiErr';
+    el.style.cssText='color:#be2346;font-size:12px;margin:8px 12px;padding:8px 12px;background:#ffeef2;border:1px solid #ffc4cf;border-radius:8px;white-space:pre-wrap;line-height:1.6';
+    const bar=document.getElementById('statusLine')||document.body;
+    const ref=bar.parentNode? bar.nextSibling : null;
+    (bar.parentNode?bar.parentNode:document.body).insertBefore(el, ref);
+  }
+  el.textContent='⚠️ 真实 AI 调用失败：'+(msg||'未知错误')+'\n（当前已回退到内置模拟 AI）';
+}
 function loadAiKeyUI(){
   const k=localStorage.getItem('discuss_dskey')||'';
   $('#aiKey').value='';
