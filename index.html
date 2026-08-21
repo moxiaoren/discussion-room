@@ -210,6 +210,7 @@ input{font-family:inherit}
       </ul>
       <h4>③ AI 总结怎么用</h4>
       <p>说了一段后点 <b>「总结 ✨」</b> → 选择 <b>你自己的发言</b>（可多条）一起总结，表达「我说完了、请对方理解回复」；卡片会展示「🎯 在回应什么 / ↔️ 是否跑题 / ⚠️ 论据支撑问题」；可「🧠重新生成 / 📝补充 / 🕘历史版本」。</p>
+      <p style="color:#999;font-size:12px">💡 开头第一段发言没有之前上下文，不做「回应/跑题」判断；「反驳、举反例、质疑」算同一话题的正常交流，不算跑题。</p>
       <h4>④ 复盘怎么进</h4>
       <p>双方都点 <b>「🛑 结束讨论」</b> 并确认 → 进入复盘：对话式回放（拖动/倍速/筛选）+ AI 总评与逐段点评。</p>
       <h4>⑤ 配置真实 AI（可选）</h4>
@@ -363,7 +364,7 @@ const AI = {
     if(points.length===0) points = [text.length>20?text.slice(0,26)+'…':text];
     let issue='';
     if(!/因为|所以|因此|由于|于是|可见|证明|足以说明|主要因为/.test(text)) issue='这段发言提出了观点，但缺少具体论据，论点支撑略显不足。';
-    let focus = bg ? '承接之前的话题，进一步表达自己的观点' : '围绕当前话题表达了自己的观点';
+    let focus = (bg && String(bg).trim()) ? '承接之前的话题，进一步表达自己的观点' : '';
     return {core, points, issue, focus, offtopic:''};
   },
   _mockComment(sumText){
@@ -375,15 +376,20 @@ const AI = {
   },
   /* ---- 对外（异步） ---- */
   async summarize(text, bg){
+    const hasBg = !!(bg && String(bg).trim());
     if(!this._hasKey()) return this._mockSummarize(text, bg);
+    const sys = hasBg
+      ? '你是两人讨论的中立整理师。我将给你「之前对话背景」和发言者这次要总结的「新发言」。请：1) 提炼新发言核心观点 core 和论据 points（points 最多3条）；2) 判断新发言在回应背景中的哪个话题/哪句观点，用 focus 一句话说明（如"回应你关于做MVP的提议，补充了时间与人力约束"；无明显对应则写"承接对当前话题的进一步阐述"）；3) 判断是否跑题——注意：**反驳、提出反例、质疑、补充、举相反例子，都是围绕当前话题的正常交流，不算跑题**；只有明显偏离当前话题、另起不相干话题才算跑题，确实跑题才用 offtopic 一句提示，否则空字符串；4) 若论点明显缺乏论据支撑（论据缺失、答非所问、逻辑断裂），用 issue 一句话指出，否则空字符串。不评价、不站队。返回严格 JSON：{"core":"...","points":[...],"issue":"...","focus":"...","offtopic":"..."}。'
+      : '你是两人讨论的中立整理师。这是**讨论的开头**，发言者第一次表达，没有任何之前的话题上下文。请只做：1) 提炼核心观点 core 和论据 points（最多3条）；2) 论点明显缺乏论据支撑用 issue 一句话指出，否则为空。**不要判断是否在回应、不要判断是否跑题**（focus 与 offtopic 一律返回空字符串）。不评价、不站队。返回严格 JSON：{"core":"...","points":[...],"issue":"...","focus":"","offtopic":""}。';
     try{
-      const out=await this._chat(
-        '你是两人讨论的中立整理师。我将给你「之前对话背景」和发言者这次要总结的「新发言（可能多条）」。请：1) 提炼新发言核心观点 core 和论据 points（points 最多3条）；2) 判断新发言在回应背景中的哪个话题/哪句观点，用 focus 一句话说明（如"回应你关于做MVP的提议，补充了时间与人力约束"；无明显对应则写"承接对当前话题的进一步阐述"）；3) 判断新发言相对当前话题是否跑题或脱节，跑题则 offtopic 用一句提示，否则空字符串；4) 若论点明显缺乏论据支撑（论据缺失、答非所问、逻辑断裂），用 issue 一句话指出，否则空字符串。不评价、不站队。返回严格 JSON：{"core":"...","points":[...],"issue":"...","focus":"...","offtopic":"..."}。',
-        '之前对话背景：\n'+(bg||'（无）')+'\n\n本次要总结的发言：\n'+text);
+      const out=await this._chat(sys,
+        hasBg
+          ? '之前对话背景：\n'+(bg||'')+'\n\n本次要总结的发言：\n'+text
+          : '本次要总结的发言（讨论开头，无之前上下文）：\n'+text);
       const m=out.match(/\{[\s\S]*\}/);
-      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||''), focus:String(j.focus||''), offtopic:String(j.offtopic||'')}; }
+      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||''), focus:hasBg?String(j.focus||''):'', offtopic:hasBg?String(j.offtopic||''):''}; }
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
-      return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4)};
+      return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4), issue:'', focus:'', offtopic:''};
     }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text, bg); }
   },
   async comment(text){
@@ -1022,7 +1028,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.2.1';
+const APP_VERSION='2.2.2';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
