@@ -350,6 +350,12 @@ input{font-family:inherit}
     <h3>📂 历史讨论</h3>
     <div style="font-size:12px;color:#888">结束讨论或新建话题时，会在这里自动存档（只保存在本机浏览器）。</div>
     <div id="histList"></div>
+    <div style="color:#888;font-size:12px;margin:16px 0 4px">☁️ 云端存档（GitHub）——公开仓库打开即可查看，无需 Token</div>
+    <div style="display:flex;gap:6px;margin:2px 0 8px;align-items:center;flex-wrap:wrap">
+      <button class="btn secondary" id="btnCloudList" style="width:auto;margin:0;padding:5px 12px;font-size:12px">🔍 读取云端存档</button>
+    </div>
+    <div id="cloudList"></div>
+    <hr style="margin:16px 0 8px;border:none;border-top:1px solid #eceaf7">
     <div class="confirm-row"><button class="btn" id="btnHistClose" style="margin:0;margin-left:auto">关闭</button></div>
   </div>
 </div>
@@ -1236,7 +1242,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.4.1';
+const APP_VERSION='2.5.0';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1297,7 +1303,7 @@ async function ghEnsureRepo(){
   const res=await fetch('https://api.github.com/repos/'+o+'/'+r,{headers:ghAuth()});
   if(res.ok) return;
   if(res.status===404){
-    const cr=await fetch('https://api.github.com/user/repos',{method:'POST',headers:ghAuth(),body:JSON.stringify({name:r,private:true,description:'二人讨论间 · 历史存档'})});
+    const cr=await fetch('https://api.github.com/user/repos',{method:'POST',headers:ghAuth(),body:JSON.stringify({name:r,private:false,description:'二人讨论间 · 历史存档（public，打开即可查看）'})});
     if(cr.status===201||cr.status===200) return;
     throw new Error('仓库不存在且自动创建失败（'+cr.status+'）：请确认 Token 有 repo 权限、仓库名合法');
   }
@@ -1314,6 +1320,40 @@ async function ghSaveToCloud(h){
 }
 function ghSavedIds(){ try{ return JSON.parse(localStorage.getItem(GITHUB_SAVED_KEY)||'[]'); }catch(e){ return []; } }
 function ghMarkSaved(id){ const a=ghSavedIds(); if(!a.includes(id)){ a.push(id); localStorage.setItem(GITHUB_SAVED_KEY,JSON.stringify(a)); } }
+async function ghListCloud(){
+  const o=ghOwner(), r=ghRepoName(); if(!o||!r) return null;
+  const headers=ghToken()?ghAuth():{};
+  const res=await fetch('https://api.github.com/repos/'+o+'/'+r+'/contents/history',{headers});
+  if(res.status===404) return [];
+  if(!res.ok) throw new Error((await res.json().catch(()=>({}))).message||('读取失败 '+res.status));
+  return (await res.json()).filter(f=>f.type==='file'&&/\.json$/i.test(f.name));
+}
+async function ghReadCloud(path){
+  const o=ghOwner(), r=ghRepoName();
+  const headers=ghToken()?ghAuth():{};
+  const res=await fetch('https://api.github.com/repos/'+o+'/'+r+'/contents/'+path,{headers});
+  if(!res.ok) throw new Error((await res.json().catch(()=>({}))).message||('读取失败 '+res.status));
+  const j=await res.json();
+  return JSON.parse(decodeURIComponent(escape(atob(j.content))));
+}
+async function renderCloudList(){
+  const el=$('#cloudList'); el.innerHTML='<div style="color:#999;font-size:12px">读取中…</div>';
+  let list;
+  try{ list=await ghListCloud(); }
+  catch(e){ el.innerHTML='<div style="color:#be2346;font-size:12px">云端读取失败：'+esc(e.message)+'</div>'; return; }
+  if(list===null){ el.innerHTML='<div style="color:#999;font-size:12px">未配置云端仓库——到大厅「☁️ GitHub 存档」填 Token 与仓库地址；公开仓库无需 Token 即可查看。</div>'; return; }
+  if(!list.length){ el.innerHTML='<div style="color:#999;font-size:12px">该仓库云端暂无存档（本机历史请见上方）。</div>'; return; }
+  el.innerHTML='';
+  list.forEach(f=>{
+    const d=document.createElement('div'); d.className='hist-item';
+    const name=(f.name||'').replace(/\.json$/i,'');
+    d.innerHTML='<div class="hist-tt"><span>'+esc(name.slice(0,22))+'</span><span class="ts">☁️ 云端</span></div>'+
+      '<div class="hist-btns"><button class="mini-btn2" data-cv>👁 查看复盘</button></div>';
+    d.querySelector('[data-cv]').onclick=async()=>{ try{ const h=await ghReadCloud(f.path||f.name); openReviewFor(h); }catch(e){ alert('云端读取失败：'+e.message); } };
+    el.appendChild(d);
+  });
+}
+$('#btnCloudList').onclick=()=>renderCloudList();
 async function cmdGhSave(h, btn){
   if(!ghToken()||!ghOwner()||!ghRepoName()){ alert('请先在大厅「☁️ GitHub 存档」区填入 Token 与目标仓库（owner/repo）。'); return; }
   if(btn){ btn.textContent='存储中…'; btn.disabled=true; }
