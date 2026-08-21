@@ -45,6 +45,9 @@ input{font-family:inherit}
 .mini-btn2:hover{background:#f3f0ff}
 .mini-btn2.warn{color:#be2346;border-color:#f0c4cf}
 .mini-btn2.warn:hover{background:#ffeef2}
+.mini-btn2.cloud{color:#2563eb;border-color:#bcd0ff}
+.mini-btn2.cloud:hover{background:#eef4ff}
+.mini-btn2.cloud.saved{color:#16a34a;border-color:#bbf7d0}
 .hist-body{margin-top:8px;border-top:1px dashed #e5defa;padding-top:8px;font-size:12px;line-height:1.7;color:#444}
 .hist-body.hidden{display:none}
 .hist-msg{margin:2px 0}
@@ -274,6 +277,13 @@ input{font-family:inherit}
       <button class="btn secondary" id="btnSaveKey" style="width:auto;margin:0;white-space:nowrap">保存</button>
     </div>
     <div class="hint" id="aiKeyState"></div>
+    <div class="lbl" style="margin-top:14px">☁️ GitHub 存档（可选 · 私有仓库）</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <input id="ghToken" class="inp" type="password" placeholder="GitHub Token（PAT，需勾选 repo 权限）" style="margin:0;flex:1;min-width:200px">
+      <input id="ghRepo" class="inp" placeholder="仓库 owner/repo（如 moxiaoren/discussion-room-history）" style="margin:0;flex:1;min-width:200px">
+      <button class="btn secondary" id="btnSaveGh" style="width:auto;margin:0;white-space:nowrap">保存</button>
+    </div>
+    <div class="hint" id="ghState">把「历史讨论」一键存到 GitHub 私有仓库，实现云端留存、跨设备可见。Token 仅存当前浏览器，不发送给第三方。</div>
     <div class="hint">创建方会自动生成一个口令；好友选「我有口令」输入即可。<br>两个标签页共用同一浏览器，数据会实时同步。</div>
   </div>
 </div>
@@ -567,10 +577,11 @@ function renderHistory(){
   list.forEach((h,i)=>{
     const d=document.createElement('div'); d.className='hist-item';
     d.innerHTML='<div class="hist-tt"><span>'+esc(h.title)+'</span><span class="ts">'+fmtHistTime(h.endTs)+' · '+(h.me||'我')+' · '+(h.msgCount||0)+' 条</span></div>'+
-      '<div class="hist-btns"><button class="mini-btn2" data-hv="'+i+'">查看</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button></div>'+
+      '<div class="hist-btns"><button class="mini-btn2" data-hv="'+i+'">查看</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button><button class="mini-btn2 cloud'+(ghSavedIds().includes(h.id)?' saved':'')+'" data-gh="'+i+'">'+(ghSavedIds().includes(h.id)?'✅ 已存':'☁️ 存到GitHub')+'</button></div>'+
       '<div class="hist-body hidden"></div>';
     d.querySelector('[data-hv]').onclick=()=>{ const b=d.querySelector('.hist-body'); if(b.classList.contains('hidden')){ renderHistBody(b,h); b.classList.remove('hidden'); } else b.classList.add('hidden'); };
     d.querySelector('[data-hd]').onclick=()=>{ if(!confirm('删除这条历史存档？此操作不可恢复。')) return; const l=histList(); l.splice(i,1); localStorage.setItem(HIST_KEY, JSON.stringify(l)); renderHistory(); };
+    d.querySelector('[data-gh]').onclick=()=>cmdGhSave(h, d.querySelector('[data-gh]'));
     el.appendChild(d);
   });
 }
@@ -1183,7 +1194,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.3.2';
+const APP_VERSION='2.4.0';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1233,9 +1244,45 @@ $('#btnSaveKey').onclick=()=>{
   else{ localStorage.removeItem('discuss_dskey'); $('#aiKeyState').textContent='已清除，改用内置模拟 AI。'; }
   $('#aiKey').value='';
 };
+const GITHUB_SAVED_KEY='github_saved';
+function ghToken(){ return localStorage.getItem('github_token')||''; }
+function ghRepo(){ return localStorage.getItem('github_repo')||''; }
+function ghOwner(){ return (ghRepo().split('/')[0]||'').trim(); }
+function ghRepoName(){ return (ghRepo().split('/')[1]||'').trim(); }
+function ghAuth(){ return {'Authorization':'Bearer '+ghToken()}; }
+async function ghEnsureRepo(){
+  const o=ghOwner(), r=ghRepoName();
+  const res=await fetch('https://api.github.com/repos/'+o+'/'+r,{headers:ghAuth()});
+  if(res.ok) return;
+  if(res.status===404){
+    const cr=await fetch('https://api.github.com/user/repos',{method:'POST',headers:ghAuth(),body:JSON.stringify({name:r,private:true,description:'二人讨论间 · 历史存档'})});
+    if(cr.status===201||cr.status===200) return;
+    throw new Error('仓库不存在且自动创建失败（'+cr.status+'）：请确认 Token 有 repo 权限、仓库名合法');
+  }
+  throw new Error('无法访问仓库（'+res.status+'）：'+((await res.json().catch(()=>({}))).message||res.statusText));
+}
+async function ghSaveToCloud(h){
+  await ghEnsureRepo();
+  const path='history/'+h.id+'.json';
+  const obj={exportedAt:new Date().toISOString(), id:h.id, title:h.title, me:h.me, startTs:h.startTs, endTs:h.endTs, msgCount:h.msgCount, messages:h.messages, summaries:h.summaries, comments:h.comments, verdict:h.verdict};
+  const b64=btoa(unescape(encodeURIComponent(JSON.stringify(obj,null,2))));
+  const res=await fetch('https://api.github.com/repos/'+ghOwner()+'/'+ghRepoName()+'/contents/'+path,{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghAuth()),body:JSON.stringify({message:'讨论间存档：'+(h.title||''),content:b64,branch:'main'})});
+  if(!res.ok) throw new Error((await res.json().catch(()=>({}))).message||('推送失败 '+res.status));
+  return 'https://github.com/'+ghOwner()+'/'+ghRepoName()+'/blob/main/'+path;
+}
+function ghSavedIds(){ try{ return JSON.parse(localStorage.getItem(GITHUB_SAVED_KEY)||'[]'); }catch(e){ return []; } }
+function ghMarkSaved(id){ const a=ghSavedIds(); if(!a.includes(id)){ a.push(id); localStorage.setItem(GITHUB_SAVED_KEY,JSON.stringify(a)); } }
+async function cmdGhSave(h, btn){
+  if(!ghToken()||!ghOwner()||!ghRepoName()){ alert('请先在大厅「☁️ GitHub 存档」区填入 Token 与目标仓库（owner/repo）。'); return; }
+  if(btn){ btn.textContent='存储中…'; btn.disabled=true; }
+  try{ const url=await ghSaveToCloud(h); ghMarkSaved(h.id); if(btn){ btn.textContent='✅ 已存'; btn.disabled=false; btn.classList.add('saved'); } alert('已存档到 GitHub：'+(h.title||'')+'\n'+url); }
+  catch(e){ if(btn){ btn.textContent='☁️ 存到GitHub'; btn.disabled=false; } alert('GitHub 存档失败：'+e.message); }
+}
+function loadGhUI(){ $('#ghToken').value=localStorage.getItem('github_token')||''; $('#ghRepo').value=localStorage.getItem('github_repo')||''; }
+$('#btnSaveGh').onclick=()=>{ localStorage.setItem('github_token',$('#ghToken').value.trim()); localStorage.setItem('github_repo',$('#ghRepo').value.trim()); $('#ghState').textContent=$('#ghRepo').value.trim() ? '✅ 已保存 · 历史将存到：'+$('#ghRepo').value.trim() : '✅ 已保存（Token 已存本地）。'; };
 loadAiKeyUI();
 loadState();
-loadEvUI();
+loadGhUI();
 
 // 初始化（若此前已在 localStorage 有口令则提示）
 </script>
