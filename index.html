@@ -77,8 +77,8 @@ input{font-family:inherit}
 .link{color:#6c5ce7;cursor:pointer;text-decoration:underline}
 
 /* ---------- 讨论区 ---------- */
-#room{flex:1;display:flex;flex-direction:column}
-#stream{flex:1;overflow-y:auto;padding:16px 14px 8px;position:relative}
+#room{flex:1;display:flex;flex-direction:column;min-height:0}
+#stream{flex:1;overflow-y:auto;padding:16px 14px 8px;position:relative;min-height:0}
 /* 弹幕浮层 */
 #danmakuLayer{position:fixed;top:14%;left:0;width:100%;pointer-events:none;z-index:30;height:120px;overflow:hidden}
 .danmaku{position:absolute;white-space:nowrap;font-size:16px;font-weight:600;color:#7c6cf0;text-shadow:0 1px 2px rgba(255,255,255,.9);animation:fly linear forwards}
@@ -117,7 +117,7 @@ input{font-family:inherit}
 .comment-card .x{margin-left:auto;background:none;color:#999;font-size:14px;cursor:pointer}
 
 /* 底部输入区 */
-#inputBar{background:#fff;border-top:1px solid #eceaf7;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px}
+#inputBar{background:#fff;border-top:1px solid #eceaf7;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;flex-shrink:0}
 #modeSwitch{display:flex;gap:6px}
 .mode-chip{padding:5px 13px;border-radius:20px;font-size:13px;background:#f0eefb;color:#7c6cf0;border:1.5px solid transparent}
 .mode-chip.on{background:linear-gradient(135deg,#6c5ce7,#a855f7);color:#fff}
@@ -577,9 +577,8 @@ function renderHistory(){
   list.forEach((h,i)=>{
     const d=document.createElement('div'); d.className='hist-item';
     d.innerHTML='<div class="hist-tt"><span>'+esc(h.title)+'</span><span class="ts">'+fmtHistTime(h.endTs)+' · '+(h.me||'我')+' · '+(h.msgCount||0)+' 条</span></div>'+
-      '<div class="hist-btns"><button class="mini-btn2" data-hv="'+i+'">查看</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button><button class="mini-btn2 cloud'+(ghSavedIds().includes(h.id)?' saved':'')+'" data-gh="'+i+'">'+(ghSavedIds().includes(h.id)?'✅ 已存':'☁️ 存到GitHub')+'</button></div>'+
-      '<div class="hist-body hidden"></div>';
-    d.querySelector('[data-hv]').onclick=()=>{ const b=d.querySelector('.hist-body'); if(b.classList.contains('hidden')){ renderHistBody(b,h); b.classList.remove('hidden'); } else b.classList.add('hidden'); };
+      '<div class="hist-btns"><button class="mini-btn2" data-rv="'+i+'">👁 完整复盘</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button><button class="mini-btn2 cloud'+(ghSavedIds().includes(h.id)?' saved':'')+'" data-gh="'+i+'">'+(ghSavedIds().includes(h.id)?'✅ 已存':'☁️ 存到GitHub')+'</button></div>';
+    d.querySelector('[data-rv]').onclick=()=>openReviewFor(h);
     d.querySelector('[data-hd]').onclick=()=>{ if(!confirm('删除这条历史存档？此操作不可恢复。')) return; const l=histList(); l.splice(i,1); localStorage.setItem(HIST_KEY, JSON.stringify(l)); renderHistory(); };
     d.querySelector('[data-gh]').onclick=()=>cmdGhSave(h, d.querySelector('[data-gh]'));
     el.appendChild(d);
@@ -1148,18 +1147,61 @@ function renderEvaluate(){
 function kpi(v,k){ return '<div class="kpi"><div class="v">'+v+'</div><div class="k">'+k+'</div></div>'; }
 
 /* ================= 导出复盘网页 ================= */
+function buildReviewHTML(data){
+  const title=data.title||('复盘 · '+fmtTL(now()));
+  const me=data.me||'';
+  const msgs=(data.messages||[]).slice().sort((a,b)=>a.ts-b.ts);
+  const summs=data.summaries||[], comments=data.comments||[], verdict=data.verdict||'';
+  const exportedAt=data.exportedAt?new Date(data.exportedAt).toLocaleString():new Date().toLocaleString();
+  let body='';
+  msgs.forEach(m=>{
+    if(m.channel==='danmaku'){ body+='<div class="dm">🎤 '+esc(m.name)+'：'+esc(m.content)+'</div>'; return; }
+    const sm=summs.find(x=>(x.ids||[x.messageId]).includes(m.id));
+    const append=m.appendTo?'（补充）':'';
+    body+='<div class="m '+(m.name===me?'me':'peer')+'"><div class="mb"><div class="mh">'+esc(m.name||'')+' · '+fmtTime(m.ts)+' '+append+'</div><div class="mt">'+esc(m.content)+'</div></div></div>';
+    if(sm){ const v=sm.versions[sm.rev]||sm.versions[sm.versions.length-1]||{};
+      body+='<div class="s"><b>🤖 AI 总结</b>'+(sm.ids&&sm.ids.length>1?'（涵盖 '+sm.ids.length+' 条）':'')+'<br>'+
+        '<span class="f">【核心观点】</span>'+esc(v.core||'')+
+        (v.topic?'<br><span class="f">🧭 讨论意图：</span>'+esc(v.topic):'')+
+        (v.points&&v.points.length?'<br><span class="f">【论据】</span>'+v.points.map(p=>esc(p)).join('；'):'')+
+        (v.focus?'<br><span class="f">🎯 在回应：</span>'+esc(v.focus):'')+
+        (v.offtopic?'<br><span class="f">↔️ 是否跑题：</span>'+esc(v.offtopic):'')+
+        (v.clarify?'<br><span class="f">💬 建议补充：</span>'+esc(v.clarify):'')+
+        (v.issue?'<br><span class="f">⚠️ 论据支撑：</span>'+esc(v.issue):'')+
+        (v.evidence&&v.evidence.sourceTypes&&v.evidence.sourceTypes.length?'<br><span class="f">🔍 证据·渠道：</span>'+v.evidence.sourceTypes.map(esc).join('、'):'')+
+        (v.evidence&&v.evidence.keywords&&v.evidence.keywords.length?'<br><span class="f">🔍 证据·关键词：</span>'+v.evidence.keywords.map(esc).join('、'):'')+
+      '</div>';
+    }
+  });
+  if(comments&&comments.length){ body+='<h2>🤖 逐段 AI 点评</h2>'; comments.forEach(c=>{ body+='<div class="cm '+(c.good===false?'off':'good')+'"><b>'+(c.good===false?'🤨 待商榷':'👍 亮点')+'</b> · '+esc(c.text||'')+'</div>'; }); }
+  if(verdict) body+='<div class="v">🏁 复盘总评</div><div class="vbox">'+esc(verdict)+'</div>';
+  const html='<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>'+title+'</title><style>'+
+    'body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:760px;margin:28px auto;padding:0 18px 60px;color:#222;background:#f6f5fb}'+
+    'h1{font-size:20px;color:#6d28d9}.sub{color:#888;font-size:13px;margin:4px 0 22px}'+
+    '.m{display:flex;margin:10px 0}.m.me{justify-content:flex-end}.m.peer{justify-content:flex-start}.mb{max-width:78%}'+
+    '.mh{font-size:11px;color:#aaa;margin:2px 4px;display:flex;gap:6px}'+
+    '.mt{padding:9px 13px;border-radius:13px;font-size:14px;line-height:1.6;background:#fff;border:1px solid #eceaf7;white-space:pre-wrap;word-break:break-word}'+
+    '.m.me .mt{background:linear-gradient(135deg,#6c5ce7,#8550e8);color:#fff;border:none;border-bottom-right-radius:4px}'+
+    '.dm{background:#f3eeff;color:#7c6cf0;padding:5px 12px;border-radius:10px;margin:6px 0;font-size:13px}'+
+    '.s{background:#f7f3ff;border:1.5px solid #ddcffc;border-left:4px solid #8b5cf6;border-radius:12px;padding:10px 13px;margin:6px 0 14px;font-size:13px;color:#3b2b5a;line-height:1.75}'+
+    '.s .f{color:#6d28d9;font-weight:600}'+
+    'h2{font-size:16px;color:#6d28d9;margin:22px 0 8px}.cm{border-radius:12px;padding:9px 13px;margin:6px 0;font-size:13px;line-height:1.6}'+
+    '.cm.good{background:#e8f8ee;border:1.5px solid #bfe8cf;border-left:4px solid #22c55e}.cm.off{background:#fff7e0;border:1.5px solid #f5e2a8;border-left:4px solid #eab308}'+
+    '.v{margin-top:22px;font-size:15px;font-weight:700;color:#6d28d9}.vbox{background:#f7f3ff;border:1.5px solid #ddcffc;border-radius:12px;padding:12px 14px;margin-top:6px;font-size:14px;line-height:1.8;white-space:pre-wrap}'+
+    '.foot{color:#999;font-size:12px;margin-top:30px}.dl{font-size:13px;color:#6d28d9;background:#ede5ff;border:none;border-radius:8px;padding:7px 16px;cursor:pointer;margin-top:12px}'+
+    '</style></head><body><h1>🗂 讨论复盘 · '+esc(title)+'</h1><div class="sub">导出于 '+exportedAt+(me?' · 本人：'+esc(me):'')+'</div>'+body+
+    '<div class="foot">本页由「二人讨论间」自动生成 · 内容由 AI 整理，仅供参考。<br>想分享给别人？按 Ctrl/Cmd+S 保存为网页文件发送，对方无需任何配置即可打开。</div>'+
+    '<button class="dl" onclick="window.print()">🖨 打印 / 另存为 PDF</button></body></html>';
+  return html;
+}
+function openReviewFor(h){
+  const w=window.open(); if(!w) return;
+  w.document.write(buildReviewHTML({title:h.title, me:h.me, messages:h.messages, summaries:h.summaries, comments:h.comments, verdict:h.verdict, exportedAt:h.endTs}));
+  w.document.close();
+}
 function exportReview(){
-  const title='复盘 · '+fmtTL(now());
-  const html='<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>'+title+'</title><style>body{font-family:sans-serif;max-width:720px;margin:30px auto;padding:0 16px;color:#222} h1{font-size:20px} .m{border:1px solid #eee;border-radius:10px;padding:10px 14px;margin:8px 0;line-height:1.6} .s{background:#f7f3ff;border-left:4px solid #8b5cf6;padding:8px 12px;border-radius:8px;margin:4px 0 12px;color:#6d28d9}</style></head><body><h1>🗂 历史复盘 · 二人讨论间</h1><p style="color:#888;font-size:13px">'+(S.topic||'')+' · 导出于 '+new Date().toLocaleString()+'</p>'+
-    S.messages.slice().sort((a,b)=>a.ts-b.ts).map(m=>{
-      if(m.channel==='danmaku') return '<div class="m">🎤 '+esc(m.name)+'：'+esc(m.content)+'</div>';
-      const sm=S.summaries.find(x=>x.messageId===m.id);
-      const app=m.appendTo?'（补充）':'';
-      return '<div class="m"><b>'+esc(m.name)+'</b>'+app+' · '+fmtTime(m.ts)+'<br>'+esc(m.content)+'</div>'+
-        (sm?('<div class="s">🤖 总结：'+esc((sm.versions[sm.rev]||sm.versions[0]).core)+'</div>'):'');
-    }).join('')+
-    '<hr style="margin:20px 0"><p style="color:#888;font-size:12px">本页由「二人讨论间」自动生成 · 内容由 AI 整理，仅供参考</p></body></html>';
-  const w=window.open(); w.document.write(html); w.document.close();
+  const html=buildReviewHTML({title:'复盘 · '+fmtTL(now()), me:S.me.name, messages:S.messages, summaries:S.summaries, comments:S.comments, verdict:S.verdict, exportedAt:Date.now()});
+  const w=window.open(); if(w){ w.document.write(html); w.document.close(); }
 }
 
 /* ================= BroadcastChannel 接收 ================= */
@@ -1194,7 +1236,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.4.0';
+const APP_VERSION='2.4.1';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
