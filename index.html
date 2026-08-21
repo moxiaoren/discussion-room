@@ -35,6 +35,10 @@ input{font-family:inherit}
 #btnNewRoom{background:#f3f0ff;color:#6d28d9;border:1px solid #d8cdf7;padding:3px 10px;border-radius:8px;font-size:12px;cursor:pointer}
 #btnNewRoom:hover{background:#e9e3ff}
 #histOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:66}
+#resumeCard{background:#eef2ff;border:1px solid #d3dcff;border-radius:12px;padding:10px 14px;margin-bottom:12px;cursor:pointer;font-size:13px;color:#3b4ea3;line-height:1.6}
+#resumeCard:hover{background:#e4ebff}
+#resumeOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:66}
+#resumeBox{width:min(92vw,460px);background:#fff;border-radius:16px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 #histBox{background:#fff;border-radius:16px;padding:20px 24px;width:560px;max-width:94vw;max-height:82vh;display:flex;flex-direction:column}
 #histBox h3{margin-bottom:4px}
 #histList{overflow-y:auto;margin:10px 0}
@@ -256,6 +260,7 @@ input{font-family:inherit}
 <!-- 大厅 -->
 <div id="lobby">
   <div class="card">
+    <div id="resumeCard" class="hidden"></div>
     <h2>👋 进入讨论间</h2>
     <div class="tip">在线网页（本地对话）· 请在同一浏览器开两个标签页，一个当「我」、一个当「好友」，数据在本地实时同步；可填自己的 DeepSeek Key 让 AI 做真实总结与复盘。</div>
     <div class="lbl">你的昵称</div>
@@ -269,7 +274,7 @@ input{font-family:inherit}
     </div>
     <div class="lbl" style="margin-top:16px">管理</div>
     <div style="display:flex;gap:6px">
-      <button class="btn" id="btnNew">🆕 存档当前并开新话题</button>
+      <button class="btn" id="btnNew">🆕 开启新话题</button>
       <button class="btn secondary" id="btnHistory">📂 历史讨论</button>
     </div>
     <div class="hint" id="newHint"></div>
@@ -313,7 +318,7 @@ input{font-family:inherit}
       <span id="others"></span>
       <span id="aiBusy" class="hidden">🤖 AI 正在模拟总结…</span>
       <span style="flex:1"></span>
-      <button id="btnNewRoom" title="存档当前讨论并开启全新空白的新话题">🆕 新话题</button>
+      <button id="btnNewRoom" title="开启全新空白的新话题">🆕 新话题</button>
       <span id="pwdTip"></span>
     </div>
   </div>
@@ -342,6 +347,20 @@ input{font-family:inherit}
     <div class="confirm-row">
       <button class="btn secondary" id="btnSumCancel" style="margin:0">取消</button>
       <button class="btn" id="btnSumConfirm" style="margin:0">✨ 确认总结</button>
+    </div>
+  </div>
+</div>
+
+<!-- 恢复进行中的讨论：身份确认 -->
+<div id="resumeOverlay" class="hidden">
+  <div id="resumeBox">
+    <h3>📌 继续进行中的讨论</h3>
+    <div class="tip" id="resumeTopic"></div>
+    <div class="lbl">你的身份昵称（必须是该讨论的<b>创建者或参与者</b>昵称）</div>
+    <input id="resumeName" class="inp" placeholder="输入你的原昵称">
+    <div class="confirm-row">
+      <button class="btn secondary" id="btnResumeCancel" style="margin:0">取消</button>
+      <button class="btn" id="btnResumeConfirm" style="margin:0">进入讨论</button>
     </div>
   </div>
 </div>
@@ -547,22 +566,69 @@ function loadState(){
 /* ================= 历史讨论 / 新话题 ================= */
 const HIST_KEY='discuss_history';
 function histList(){ try{ return JSON.parse(localStorage.getItem(HIST_KEY)||'[]'); }catch(e){ return []; } }
+const ACTIVE_KEY='discuss_active';
+function loadActive(){ try{ return JSON.parse(localStorage.getItem(ACTIVE_KEY)||'{}'); }catch(e){ return {}; } }
+function clearActive(){ try{ localStorage.setItem(ACTIVE_KEY, JSON.stringify({active:false})); }catch(e){} }
+function setActive(){
+  const a=loadActive();
+  if(S.me.name){ if(S.me.isCreator) a.creator=S.me.name; else a.peer=S.me.name; }
+  const first=S.messages.find(m=>m.channel==='discuss');
+  if(first&&first.content) a.title=(first.content||'').slice(0,16);
+  if(!a.title) a.title='未命名';
+  a.session=localStorage.getItem('discuss_session')||'';
+  a.active=true; a.updated=Date.now();
+  try{ localStorage.setItem(ACTIVE_KEY, JSON.stringify(a)); }catch(e){}
+}
 function archiveCurrent(){
   if(!S.messages.length) return null;
   const first=S.messages.find(m=>m.channel==='discuss');
-  const h={id:uid(), me:S.me.name||'我', startTs:(S.messages[0]||{}).ts||Date.now(), endTs:Date.now(),
+  const session=localStorage.getItem('discuss_session')||uid();
+  const h={id:session||uid(), session, me:S.me.name||'我', startTs:(S.messages[0]||{}).ts||Date.now(), endTs:Date.now(),
     title:(first&&first.content||'未命名').slice(0,16), messages:S.messages, summaries:S.summaries,
     comments:S.comments, verdict:S.verdict, msgCount:S.messages.filter(m=>m.channel==='discuss').length};
-  const list=histList(); list.unshift(h); localStorage.setItem(HIST_KEY, JSON.stringify(list));
+  const list=histList();
+  const i=list.findIndex(x=>x.session===session);
+  if(i>=0) list[i]=h; else list.unshift(h);
+  localStorage.setItem(HIST_KEY, JSON.stringify(list));
   return h;
 }
+function renderResumeCard(){
+  const a=loadActive(), card=$('#resumeCard');
+  if(a.active && S.messages.length>0){
+    const roles=[a.creator,a.peer].filter(Boolean).join(' / ');
+    card.innerHTML='📌 <b>继续进行中的讨论：</b>「'+esc(a.title||'未命名')+'」<br><span style="font-size:12px;opacity:.8;color:#667">点击继续 · 原身份：'+esc(roles||'（尚未确定）')+'</span>';
+    card.classList.remove('hidden');
+  }else card.classList.add('hidden');
+}
+$('#resumeCard').onclick=()=>{
+  const a=loadActive();
+  const roles=[a.creator,a.peer].filter(Boolean);
+  $('#resumeTopic').innerHTML='当前进行中的讨论：「<b>'+esc(a.title||'未命名')+'</b>」<br>身份需为任一原昵称：<b>'+esc(roles.join(' / '))+'</b>';
+  $('#resumeName').value='';
+  $('#resumeName').placeholder=roles[0]||'输入原昵称';
+  $('#resumeOverlay').classList.remove('hidden');
+  $('#resumeName').focus();
+};
+$('#btnResumeCancel').onclick=()=>$('#resumeOverlay').classList.add('hidden');
+$('#btnResumeConfirm').onclick=()=>{
+  const a=loadActive();
+  const roles=[a.creator,a.peer].filter(Boolean);
+  const name=$('#resumeName').value.trim();
+  if(!name){ alert('请输入身份昵称'); return; }
+  if(roles.length && !roles.includes(name)){ alert('身份不匹配：必须是该讨论的创建者或参与者昵称（'+roles.join(' / ')+'）。'); return; }
+  $('#resumeOverlay').classList.add('hidden');
+  enterRoom(name, !!(a.creator&&name===a.creator));
+};
+
 function resetCurrent(){ S.messages=[]; S.summaries=[]; S.comments=[]; S.verdict=null; try{localStorage.removeItem(STATE_KEY);}catch(e){} }
-function leaveToLobby(){ S.inRoom=false; $('#room').classList.add('hidden'); $('#reviewView').classList.add('hidden'); $('#lobby').classList.remove('hidden'); }
+function leaveToLobby(){ S.inRoom=false; $('#room').classList.add('hidden'); $('#reviewView').classList.add('hidden'); $('#lobby').classList.remove('hidden'); renderResumeCard(); }
 function startNewTopic(){
   const has=S.messages.length>0;
   const m=has ? '将把当前讨论存档到「历史讨论」，然后开启一个全新空白的讨论间开始新话题。确定吗？' : '将开启一个全新空白的讨论间开始新话题。确定吗？';
   if(!confirm(m)) return;
   archiveCurrent(); resetCurrent();
+  localStorage.setItem('discuss_session', uid());
+  clearActive();
   const pwd=String(Math.floor(100000+Math.random()*900000));
   localStorage.setItem('discuss_pwd',pwd);
   $('#pwdTip').textContent='新话题口令：'+pwd;
@@ -609,6 +675,7 @@ function enterRoom(name, isCreator){
   }
   renderStatus();
   renderStream();
+  setActive();
   broadcast({type:'hello', name, ts:now()});
 }
 
@@ -616,6 +683,7 @@ $('#btnCreate').onclick=()=>{
   const name=$('#myName').value.trim(); if(!name){alert('请先输入昵称');return;}
   const pwd = String(Math.floor(100000+Math.random()*900000));
   localStorage.setItem('discuss_pwd', pwd);
+  localStorage.setItem('discuss_session', uid());
   $('#pwdTip').textContent = '本窗口口令：'+pwd;
   enterRoom(name, true);
 };
@@ -745,6 +813,7 @@ function sendDiscuss(content, withSummary){
   S.messages.push(m);
   persistState();
   renderStream();
+  setActive();
   broadcast({type:'msg',m});
   return id;
 }
@@ -949,6 +1018,8 @@ async function enterReview(){
   $('#room').classList.add('hidden');
   $('#reviewView').classList.remove('hidden');
   $('#topSub').textContent='复盘 · 讨论已结束';
+  archiveCurrent();  // 结束讨论自动存档（按会话 session 去重，不重复）
+  clearActive();     // 已结束，不再显示“进行中”恢复入口
   $('#aiBusy').classList.remove('hidden');
   await ensureComments();  // 对话期间不点评，点评统一在复盘回顾阶段生成
   await ensureVerdict();
@@ -1235,6 +1306,8 @@ function openReviewArchive(h){
   histBackup=snapshotS();
   histView=true;
   loadReviewData(h);
+  $('#lobby').classList.add('hidden');
+  $('#histOverlay').classList.add('hidden');
   $('#room').classList.add('hidden');
   $('#reviewView').classList.remove('hidden');
   $('#topSub').textContent='历史复盘 · '+(h.title||'');
@@ -1299,7 +1372,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.6.1';
+const APP_VERSION='2.6.2';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1422,6 +1495,7 @@ $('#btnSaveGh').onclick=()=>{ localStorage.setItem('github_token',$('#ghToken').
 loadAiKeyUI();
 loadState();
 loadGhUI();
+renderResumeCard();
 
 // 初始化（若此前已在 localStorage 有口令则提示）
 </script>
