@@ -32,6 +32,24 @@ input{font-family:inherit}
 #helpBody p{margin:4px 0}
 #guideBar{margin:0;background:#fff7e0;border-bottom:1px solid #f5e2a8;color:#8a6d0a;font-size:12px;padding:8px 14px;line-height:1.7}
 #guideBar.hidden{display:none}
+#btnNewRoom{background:#f3f0ff;color:#6d28d9;border:1px solid #d8cdf7;padding:3px 10px;border-radius:8px;font-size:12px;cursor:pointer}
+#btnNewRoom:hover{background:#e9e3ff}
+#histOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:66}
+#histBox{background:#fff;border-radius:16px;padding:20px 24px;width:560px;max-width:94vw;max-height:82vh;display:flex;flex-direction:column}
+#histBox h3{margin-bottom:4px}
+#histList{overflow-y:auto;margin:10px 0}
+.hist-item{border:1px solid #ece7fb;border-radius:10px;padding:8px 10px;margin-bottom:8px}
+.hist-tt{font-weight:600;font-size:13px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.hist-btns{margin-top:4px;display:flex;gap:6px}
+.mini-btn2{font-size:12px;padding:2px 10px;border-radius:6px;border:1px solid #ddd;background:#fff;cursor:pointer}
+.mini-btn2:hover{background:#f3f0ff}
+.mini-btn2.warn{color:#be2346;border-color:#f0c4cf}
+.mini-btn2.warn:hover{background:#ffeef2}
+.hist-body{margin-top:8px;border-top:1px dashed #e5defa;padding-top:8px;font-size:12px;line-height:1.7;color:#444}
+.hist-body.hidden{display:none}
+.hist-msg{margin:2px 0}
+.hist-sum{margin:4px 0;color:#6d28d9}
+.hist-verdict{margin-top:6px;color:#555;background:#f7f3ff;border-radius:8px;padding:6px 8px}
 
 /* ---------- 大厅（进入） ---------- */
 #lobby{flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef0ff,#fbeaff)}
@@ -236,7 +254,13 @@ input{font-family:inherit}
       <div class="lbl">输入口令</div>
       <input id="pwdInput" class="inp" placeholder="6 位口令">
     </div>
-    <div class="lbl" style="margin-top:18px">🤖 真实 AI · DeepSeek（可选）</div>
+    <div class="lbl" style="margin-top:16px">管理</div>
+    <div style="display:flex;gap:6px">
+      <button class="btn" id="btnNew">🆕 存档当前并开新话题</button>
+      <button class="btn secondary" id="btnHistory">📂 历史讨论</button>
+    </div>
+    <div class="hint" id="newHint"></div>
+    <div class="lbl" style="margin-top:16px">🤖 真实 AI · DeepSeek（可选）</div>
     <div style="display:flex;gap:6px">
       <input id="aiKey" class="inp" type="password" placeholder="粘贴你的 DeepSeek API Key（sk-…）" style="margin:0">
       <button class="btn secondary" id="btnSaveKey" style="width:auto;margin:0;white-space:nowrap">保存</button>
@@ -269,6 +293,7 @@ input{font-family:inherit}
       <span id="others"></span>
       <span id="aiBusy" class="hidden">🤖 AI 正在模拟总结…</span>
       <span style="flex:1"></span>
+      <button id="btnNewRoom" title="存档当前讨论并开启全新空白的新话题">🆕 新话题</button>
       <span id="pwdTip"></span>
     </div>
   </div>
@@ -301,6 +326,15 @@ input{font-family:inherit}
 </div>
 
 <!-- 复盘视图 -->
+<div id="histOverlay" class="hidden">
+  <div id="histBox">
+    <h3>📂 历史讨论</h3>
+    <div style="font-size:12px;color:#888">结束讨论或新建话题时，会在这里自动存档（只保存在本机浏览器）。</div>
+    <div id="histList"></div>
+    <div class="confirm-row"><button class="btn" id="btnHistClose" style="margin:0;margin-left:auto">关闭</button></div>
+  </div>
+</div>
+
 <div id="reviewView" class="hidden">
   <div id="reviewNav">
     <button class="rnav-btn on" data-rv="playback">🎬 对话式回放</button>
@@ -449,6 +483,56 @@ function loadState(){
     if(Array.isArray(d.comments)) S.comments=d.comments;
     if(d.verdict!=null) S.verdict=d.verdict;
   }catch(e){ console.warn('load fail',e); }
+}
+
+/* ================= 历史讨论 / 新话题 ================= */
+const HIST_KEY='discuss_history';
+function histList(){ try{ return JSON.parse(localStorage.getItem(HIST_KEY)||'[]'); }catch(e){ return []; } }
+function archiveCurrent(){
+  if(!S.messages.length) return null;
+  const first=S.messages.find(m=>m.channel==='discuss');
+  const h={id:uid(), me:S.me.name||'我', startTs:(S.messages[0]||{}).ts||Date.now(), endTs:Date.now(),
+    title:(first&&first.content||'未命名').slice(0,16), messages:S.messages, summaries:S.summaries,
+    comments:S.comments, verdict:S.verdict, msgCount:S.messages.filter(m=>m.channel==='discuss').length};
+  const list=histList(); list.unshift(h); localStorage.setItem(HIST_KEY, JSON.stringify(list));
+  return h;
+}
+function resetCurrent(){ S.messages=[]; S.summaries=[]; S.comments=[]; S.verdict=null; try{localStorage.removeItem(STATE_KEY);}catch(e){} }
+function leaveToLobby(){ S.inRoom=false; $('#room').classList.add('hidden'); $('#reviewView').classList.add('hidden'); $('#lobby').classList.remove('hidden'); }
+function startNewTopic(){
+  const has=S.messages.length>0;
+  const m=has ? '将把当前讨论存档到「历史讨论」，然后开启一个全新空白的讨论间开始新话题。确定吗？' : '将开启一个全新空白的讨论间开始新话题。确定吗？';
+  if(!confirm(m)) return;
+  archiveCurrent(); resetCurrent();
+  const pwd=String(Math.floor(100000+Math.random()*900000));
+  localStorage.setItem('discuss_pwd',pwd);
+  $('#pwdTip').textContent='新话题口令：'+pwd;
+  leaveToLobby();
+  $('#myName').value='';
+  $('#newHint').innerHTML='✅ 已完成。新话题口令：<b>'+pwd+'</b> —— 本标签点「创建讨论间」进入新话题，另一标签输入该口令即可加入。';
+  renderStatus();
+}
+function fmtHistTime(ts){ const t=new Date(ts); return String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0')+' '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'); }
+function renderHistBody(el, h){
+  let html='';
+  (h.messages||[]).forEach(m=>{ if(m.channel==='discuss') html+='<div class="hist-msg"><b>'+esc(m.name||'')+'</b>：'+esc(m.content)+'</div>'; });
+  (h.summaries||[]).forEach(sm=>{ const v=sm.versions[sm.rev]||sm.versions[sm.versions.length-1]||{}; if(v&&v.core) html+='<div class="hist-sum">🤖 '+esc(v.core)+'</div>'; });
+  if(h.verdict) html+='<div class="hist-verdict">🏁 '+esc(h.verdict)+'</div>';
+  el.innerHTML=html||'<div style="color:#999">（该存档无内容）</div>';
+}
+function renderHistory(){
+  const list=histList();
+  const el=$('#histList'); el.innerHTML='';
+  if(!list.length){ el.innerHTML='<div style="color:#999;padding:20px;text-align:center">还没有历史讨论。结束讨论或新建话题时，会把当前内容自动存档到这里。</div>'; return; }
+  list.forEach((h,i)=>{
+    const d=document.createElement('div'); d.className='hist-item';
+    d.innerHTML='<div class="hist-tt"><span>'+esc(h.title)+'</span><span class="ts">'+fmtHistTime(h.endTs)+' · '+(h.me||'我')+' · '+(h.msgCount||0)+' 条</span></div>'+
+      '<div class="hist-btns"><button class="mini-btn2" data-hv="'+i+'">查看</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button></div>'+
+      '<div class="hist-body hidden"></div>';
+    d.querySelector('[data-hv]').onclick=()=>{ const b=d.querySelector('.hist-body'); if(b.classList.contains('hidden')){ renderHistBody(b,h); b.classList.remove('hidden'); } else b.classList.add('hidden'); };
+    d.querySelector('[data-hd]').onclick=()=>{ if(!confirm('删除这条历史存档？此操作不可恢复。')) return; const l=histList(); l.splice(i,1); localStorage.setItem(HIST_KEY, JSON.stringify(l)); renderHistory(); };
+    el.appendChild(d);
+  });
 }
 function fmtTime(ts){ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
 function fmtTL(ts){ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
@@ -1033,7 +1117,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.2.3';
+const APP_VERSION='2.3.0';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1051,6 +1135,12 @@ function checkVersion(){
 $('#verBadge').onclick=checkVersion;
 $('#btnUpdate').onclick=()=>location.reload(true);
 checkVersion();
+
+/* 历史 / 新话题 绑定 */
+$('#btnNew').onclick=startNewTopic;
+$('#btnNewRoom').onclick=startNewTopic;
+$('#btnHistory').onclick=()=>{ renderHistory(); $('#histOverlay').classList.remove('hidden'); };
+$('#btnHistClose').onclick=()=>$('#histOverlay').classList.add('hidden');
 
 // 初始化：加载 AI Key 状态
 function showAiErr(msg){
