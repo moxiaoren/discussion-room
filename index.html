@@ -34,6 +34,14 @@ input{font-family:inherit}
 #guideBar.hidden{display:none}
 #btnNewRoom{background:#f3f0ff;color:#6d28d9;border:1px solid #d8cdf7;padding:3px 10px;border-radius:8px;font-size:12px;cursor:pointer}
 #btnNewRoom:hover{background:#e9e3ff}
+#roomBar{background:#fff;border-bottom:1px solid #eceaf7;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.room-pwd{display:flex;align-items:center;gap:8px;background:#f3efff;border:1px solid #ddd6fe;border-radius:10px;padding:4px 8px 4px 12px}
+.room-pwd .rm-label{font-size:12px;color:#7c5cd6;font-weight:600}
+.room-pwd .rm-code{font-family:Consolas,"Courier New",monospace;font-size:17px;font-weight:700;color:#5b21b6;letter-spacing:3px}
+.room-pwd .rm-copy{font-size:12px;color:#fff;background:#8b5cf6;border:none;border-radius:7px;padding:3px 10px;cursor:pointer}
+.room-pwd .rm-copy:hover{background:#7c3aed}
+#roomBar #btnNewRoom{white-space:nowrap;padding:4px 10px}
+#roomBar #btnEnd{white-space:nowrap;padding:0 12px;height:28px}
 #histOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:66}
 #resumeCard{background:#eef2ff;border:1px solid #d3dcff;border-radius:12px;padding:10px 14px;margin-bottom:12px;cursor:pointer;font-size:13px;color:#3b4ea3;line-height:1.6}
 #resumeCard:hover{background:#e4ebff}
@@ -299,13 +307,21 @@ input{font-family:inherit}
 <div id="room" class="hidden">
   <div id="danmakuLayer"></div>
   <div id="guideBar" class="hidden"></div>
+  <div id="roomBar">
+    <div class="room-pwd" title="好友在另一标签点「🔑 我有口令」输入此编号即可加入">
+      <span class="rm-label">🔑 房间口令</span>
+      <span id="pwdCode" class="rm-code">------</span>
+      <button id="btnCopyPwd" class="rm-copy">📋 复制</button>
+    </div>
+    <div style="flex:1"></div>
+    <button id="btnNewRoom" title="开启全新空白的新话题">🆕 新话题</button>
+    <button id="btnEnd" title="双方都确认后进入复盘">🛑 结束讨论</button>
+  </div>
   <div id="stream"></div>
   <div id="inputBar">
     <div id="modeSwitch">
       <button class="mode-chip on" data-mode="discuss" title="讨论：正文对话，会进 AI 总结与复盘">💬 讨论模式</button>
       <button class="mode-chip" data-mode="danmaku" title="弹幕：场外吐槽，飘过展示，永不进总结与复盘">🎤 弹幕模式</button>
-      <div style="flex:1"></div>
-      <button id="btnEnd" title="双方都确认后进入复盘">🛑 结束讨论</button>
     </div>
     <div id="inputRow">
       <input id="input" placeholder="输入你的观点…（Enter 发送）">
@@ -317,9 +333,6 @@ input{font-family:inherit}
       <span id="roomTopic">💬 讨论进行中</span>
       <span id="others"></span>
       <span id="aiBusy" class="hidden">🤖 AI 正在模拟总结…</span>
-      <span style="flex:1"></span>
-      <button id="btnNewRoom" title="开启全新空白的新话题">🆕 新话题</button>
-      <span id="pwdTip"></span>
     </div>
   </div>
 </div>
@@ -631,7 +644,7 @@ function startNewTopic(){
   clearActive();
   const pwd=String(Math.floor(100000+Math.random()*900000));
   localStorage.setItem('discuss_pwd',pwd);
-  $('#pwdTip').textContent='新话题口令：'+pwd;
+  $('#pwdCode').textContent=pwd;
   leaveToLobby();
   $('#myName').value='';
   $('#newHint').innerHTML='✅ 已完成。新话题口令：<b>'+pwd+'</b> —— 本标签点「创建讨论间」进入新话题，另一标签输入该口令即可加入。';
@@ -668,6 +681,8 @@ function enterRoom(name, isCreator){
   $('#lobby').classList.add('hidden');
   $('#room').classList.remove('hidden');
   $('#topSub').textContent = '讨论进行中 · 你：'+name+(isCreator?'（发起人）':'');
+  const __curPwd=localStorage.getItem('discuss_pwd')||'';
+  if(__curPwd && $('#pwdCode')) $('#pwdCode').textContent=__curPwd;
   if(!sessionStorage.getItem('dr_guide')){
     $('#guideBar').innerHTML='💡 <b>怎么玩：</b>左=你 / 右=好友 · 上方切「💬讨论 / 🎤弹幕」 · 说一段话后点「总结 ✨」总结<b>自己的发言</b>（表达说完了，AI 会判断回应与是否跑题） · 结束点「🛑」双方确认进复盘 · 右上角「❓」可看完整说明';
     $('#guideBar').classList.remove('hidden');
@@ -684,7 +699,7 @@ $('#btnCreate').onclick=()=>{
   const pwd = String(Math.floor(100000+Math.random()*900000));
   localStorage.setItem('discuss_pwd', pwd);
   localStorage.setItem('discuss_session', uid());
-  $('#pwdTip').textContent = '本窗口口令：'+pwd;
+  $('#pwdCode').textContent=pwd;
   enterRoom(name, true);
 };
 let joinStage=false;
@@ -1372,7 +1387,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.6.2';
+const APP_VERSION='2.6.3';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1396,6 +1411,19 @@ $('#btnNew').onclick=startNewTopic;
 $('#btnNewRoom').onclick=startNewTopic;
 $('#btnHistory').onclick=()=>{ renderHistory(); $('#histOverlay').classList.remove('hidden'); };
 $('#btnHistClose').onclick=()=>$('#histOverlay').classList.add('hidden');
+function legacyCopyPwd(text){
+  const ta=document.createElement('textarea'); ta.value=text; ta.style.cssText='position:fixed;opacity:0;pointer-events:none';
+  document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(ta);
+}
+$('#btnCopyPwd').onclick=()=>{
+  const p=(localStorage.getItem('discuss_pwd')||'').trim()||($('#pwdCode')?$('#pwdCode').textContent:'');
+  const btn=$('#btnCopyPwd');
+  function done(){ btn.textContent='✅ 已复制'; btn.style.background='#059669'; setTimeout(()=>{ btn.textContent='📋 复制'; btn.style.background=''; },1400); }
+  if(!p) return;
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(p).then(done).catch(()=>{ legacyCopyPwd(p); done(); });
+  }else{ legacyCopyPwd(p); done(); }
+};
 
 // 初始化：加载 AI Key 状态
 function showAiErr(msg){
