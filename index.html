@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>二人讨论间 · M1 模拟版</title>
+<title>二人讨论间 · 在线版</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#f2f1f8;color:#222;height:100vh;display:flex;flex-direction:column}
@@ -151,7 +151,7 @@ input{font-family:inherit}
 <!-- 顶部 -->
 <div id="topbar">
   <div>
-    <div class="brand">二人讨论间 · M1 模拟版</div>
+    <div class="brand">二人讨论间 · 在线版</div>
     <div class="sub" id="topSub">等待进入</div>
   </div>
   <div id="topMembers"></div>
@@ -161,7 +161,7 @@ input{font-family:inherit}
 <div id="lobby">
   <div class="card">
     <h2>👋 进入讨论间</h2>
-    <div class="tip">M1 单机模拟版 · 请在同一浏览器开两个标签页，分别作为「我」和「好友」</div>
+    <div class="tip">在线网页（本地对话）· 请在同一浏览器开两个标签页，一个当「我」、一个当「好友」，数据在本地实时同步；可填自己的 DeepSeek Key 让 AI 做真实总结与复盘。</div>
     <div class="lbl">你的昵称</div>
     <input id="myName" class="inp" placeholder="例：小林">
     <div class="lbl">模式</div>
@@ -171,6 +171,12 @@ input{font-family:inherit}
       <div class="lbl">输入口令</div>
       <input id="pwdInput" class="inp" placeholder="6 位口令">
     </div>
+    <div class="lbl" style="margin-top:18px">🤖 真实 AI · DeepSeek（可选）</div>
+    <div style="display:flex;gap:6px">
+      <input id="aiKey" class="inp" type="password" placeholder="粘贴你的 DeepSeek API Key（sk-…）" style="margin:0">
+      <button class="btn secondary" id="btnSaveKey" style="width:auto;margin:0;white-space:nowrap">保存</button>
+    </div>
+    <div class="hint" id="aiKeyState"></div>
     <div class="hint">创建方会自动生成一个口令；好友选「我有口令」输入即可。<br>两个标签页共用同一浏览器，数据会实时同步。</div>
   </div>
 </div>
@@ -255,21 +261,60 @@ input{font-family:inherit}
 <script>
 "use strict";
 /* ================= 模拟 AI 引擎 ================= */
+/* ================= AI 引擎（真实 DeepSeek，未配置 Key 时回退模拟） ================= */
 const AI = {
+  _hasKey(){ const k=(localStorage.getItem('discuss_dskey')||'').trim(); return !!k; },
+  async _chat(system, user){
+    const key=(localStorage.getItem('discuss_dskey')||'').trim();
+    if(!key) throw new Error('no-key');
+    const r=await fetch('https://api.deepseek.com/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+      body:JSON.stringify({model:'deepseek-chat',messages:[{role:'system',content:system},{role:'user',content:user}],temperature:0.6})
+    });
+    if(!r.ok){ let msg='HTTP '+r.status; try{ msg=((await r.json()).error||{}).message||msg; }catch(_){ } throw new Error(msg); }
+    const j=await r.json();
+    return (j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
+  },
+  /* ---- 模拟回退 ---- */
   _pick(sentences){ return sentences.filter(s=>s.length>=6)||[]; },
-  summarize(text){
+  _mockSummarize(text){
     const clean = text.replace(/[，。！？、；：\n]+/g,'|').split('|').map(s=>s.trim()).filter(s=>s);
     let core = clean[0]||text.slice(0,20);
     let points = clean.slice(1,4);
     if(points.length===0) points = [text.length>20?text.slice(0,26)+'…':text];
     return {core, points};
   },
-  comment(sumText){
+  _mockComment(sumText){
     const t = sumText;
-    if(/是不是|为什么|怎么办/.test(t)) return {style:'good', text:'🤔 这一段抛出了很关键的问题，值得深挖。'};
-    if(/但是|其实|不过|我觉得|我认为/.test(t)) return {style:'good', text:'✨ 这一段在自我澄清，观点越来越清晰了！'};
-    if(/啊|哈哈|算了|随便/.test(t)) return {style:'off', text:'🎈 这段似乎有点跑题，可以拉回主线。'};
+    if(/是不是|为什么|怎么办/.test(t)) return {style:'good', text:'🤔 这一段抛出了很关键的问题，值得深挖。'}
+    if(/但是|其实|不过|我觉得|我认为/.test(t)) return {style:'good', text:'✨ 这一段在自我澄清，观点越来越清晰了！'}
+    if(/啊|哈哈|算了|随便/.test(t)) return {style:'off', text:'🎈 这段似乎有点跑题，可以拉回主线。'}
     return {style:'good', text:'✨ 这一段表达得很清楚，双方思路有了新进展。'};
+  },
+  /* ---- 对外（异步） ---- */
+  async summarize(text){
+    if(!this._hasKey()) return this._mockSummarize(text);
+    try{
+      const out=await this._chat(
+        '你是两人讨论的中立整理师。只根据用户文本提炼总结，不评价、不站队、不修改立场。返回严格 JSON：{"core":"一句核心观点","points":["论据1","论据2"]}。points 最多 3 条，不足则给 1 条。',
+        '待总结的发言段：'+text);
+      const m=out.match(/\{[\s\S]*\}/);
+      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3)}; }
+      const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
+      return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4)};
+    }catch(e){ console.warn('deepseek summarize fail', e); return this._mockSummarize(text); }
+  },
+  async comment(text){
+    if(!this._hasKey()) return this._mockComment(text);
+    try{
+      const out=await this._chat(
+        '你是两人讨论复盘的点评者。给这一段做一句简短点评。返回严格 JSON：{"style":"good"或"off","text":"点评内容，一句话、30字内"}。good=肯定或有进展；off=跑题或需拉回。',
+        '该段内容：'+text);
+      const m=out.match(/\{[\s\S]*\}/);
+      if(m){ const j=JSON.parse(m[0]); return {style:j.style==='off'?'off':'good', text:String(j.text||'')}; }
+      return {style:'good', text:(out||'').slice(0,40)||'这一段表达清晰。'};
+    }catch(e){ console.warn('deepseek comment fail', e); return this._mockComment(text); }
   }
 };
 
@@ -282,6 +327,7 @@ const S = {
   messages:[],   // {id,name,ts,content,appendTo,channel}
   summaries:[],  // {messageId, core, points, rev, versions:[]}
   comments:[],   // {id,msgId,atTs,style,text,source}
+  verdict:null,  // 复盘 AI 总评文本
   danmakuActive:[],
   review:{currentTs:0,playing:false,spd:1,filter:'all',playingStart:0},
 };
@@ -435,26 +481,32 @@ function spawnDanmaku(text){
   layer.appendChild(d);
   setTimeout(()=>d.remove(), 7000);
 }
-function genSummary(msg){
+async function genSummary(msg){
   $('#aiBusy').classList.remove('hidden');
-  setTimeout(()=>{
-    $('#aiBusy').classList.add('hidden');
-    const res=AI.summarize(msg.content);
+  try{
+    const res=await AI.summarize(msg.content);
     const sm={messageId:msg.id, core:res.core, points:res.points, rev:0, versions:[{core:res.core, points:res.points}]};
     S.summaries.push(sm);
     renderStream();
     broadcast({type:'summary',sm});
-  }, 600+Math.random()*500);
+  }finally{
+    $('#aiBusy').classList.add('hidden');
+  }
 }
-function redoSummary(msgId){
+async function redoSummary(msgId){
   const msg=S.messages.find(m=>m.id===msgId);
   const sm=S.summaries.find(x=>x.messageId===msgId); if(!sm||!msg) return;
   // 合并该段原文+所有补充
   const full = S.messages.filter(m=>m.appendTo===msgId).map(m=>m.content);
   const text = msg.content + (full.length?'（补充：'+full.join('；')+'）':'');
-  const res=AI.summarize(text);
-  sm.rev=sm.versions.length;
-  sm.versions.push({core:res.core+'（已修订）', points:res.points});
+  $('#aiBusy').classList.remove('hidden');
+  try{
+    const res=await AI.summarize(text);
+    sm.rev=sm.versions.length;
+    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points});
+  }finally{
+    $('#aiBusy').classList.add('hidden');
+  }
   renderStream();
   broadcast({type:'summary',sm});
 }
@@ -543,25 +595,42 @@ const R={nodes:[],min:0,max:0};
 let dragging=false;
 $('#btnExport').onclick=exportReview;
 
-function enterReview(){
+async function enterReview(){
   S.inRoom=false;
   $('#room').classList.add('hidden');
   $('#reviewView').classList.remove('hidden');
   $('#topSub').textContent='复盘 · 讨论已结束';
-  ensureComments();  // 对话期间不点评，点评统一在复盘回顾阶段生成
+  $('#aiBusy').classList.remove('hidden');
+  await ensureComments();  // 对话期间不点评，点评统一在复盘回顾阶段生成
+  await ensureVerdict();
+  $('#aiBusy').classList.add('hidden');
   buildTimeline();
   renderPlayback();
   renderEvaluate();
 }
 /* 复盘阶段：为每一段（有总结的消息）生成一条 AI 点评 */
-function ensureComments(){
+async function ensureComments(){
   if(S.comments.length) return;
-  S.summaries.forEach(sm=>{
-    const m=S.messages.find(x=>x.id===sm.messageId); if(!m) return;
+  for(const sm of S.summaries){
+    const m=S.messages.find(x=>x.id===sm.messageId); if(!m) continue;
     const v=sm.versions[sm.rev]||sm.versions[sm.versions.length-1];
-    const cm=AI.comment((v&&v.core)||m.content);
-    S.comments.push({id:uid(),msgId:sm.messageId,atTs:m.ts,style:cm.style,text:cm.text,source:'auto'});
-  });
+    const cm=await AI.comment((v&&v.core)||m.content);
+    if(S.comments.find(c=>c.msgId===sm.messageId)) continue;
+    const c={id:uid(),msgId:sm.messageId,atTs:m.ts,style:cm.style,text:cm.text,source:'auto'};
+    S.comments.push(c);
+    broadcast({type:'comment',cm:c});
+  }
+}
+async function ensureVerdict(){
+  if(S.verdict!==null) return;
+  if(!AI._hasKey()){ S.verdict=null; return; }
+  const msgs=S.messages.filter(m=>m.channel==='discuss').map(m=>m.name+'：'+m.content);
+  try{
+    const out=await AI._chat(
+      '你是两人讨论结束后的复盘者。请基于完整对话写一段综合点评（200字内、中文）：概括讨论主题、双方观点、共识与分歧、值得继续深挖的方向。',
+      '讨论主题：'+(S.topic||'未命名')+'\n\n对话记录：\n'+(msgs.join('\n')||'（无讨论消息）'));
+    S.verdict=out.trim();
+  }catch(e){ console.warn('deepseek verdict fail',e); S.verdict=null; }
 }
 document.querySelectorAll('.rnav-btn').forEach(b=>b.onclick=()=>{
   rvTab=b.dataset.rv;
@@ -724,8 +793,9 @@ function renderEvaluate(){
   const du=[];
   function cols(arr,name){ return arr.slice(0,3).map(m=>m.content.length>24?m.content.slice(0,24)+'…':m.content); }
   const total=msgs.length+dan.length;
+  const verdict = S.verdict || ('这场「'+esc(S.topic||'未命名')+'」的讨论双方共发言 '+msgs.length+' 条、弹幕 '+dan.length+' 条。整体围绕主线展开，双方观点逐步清晰，是一次有效的交流。');
   pane.innerHTML=
-    '<div class="verdict">🧭 <b>AI 总评：</b>这场「'+esc(S.topic||'未命名')+'」的讨论双方共发言 '+msgs.length+' 条、弹幕 '+dan.length+' 条。整体围绕主线展开，双方观点逐步清晰，是一次有效的交流。</div>'+
+    '<div class="verdict">🧭 <b>AI 总评：</b>'+esc(verdict)+'</div>'+
     '<div class="kpi-grid">'+
       kpi(msgs.length,'讨论条数')+kpi(dan.length,'吐槽条数')+kpi(S.summaries.length,'AI 段落')+kpi(Math.max(1,Math.round((msgs.reduce((a,m)=>a+(m.appendTo?0:1),0)))),'观点段')+
     '</div>'+
@@ -794,6 +864,22 @@ bc.onmessage=(e)=>{
   }
 };
 
+
+// 初始化：加载 AI Key 状态
+function loadAiKeyUI(){
+  const k=localStorage.getItem('discuss_dskey')||'';
+  $('#aiKey').value='';
+  $('#aiKeyState').textContent = k
+    ? '✅ 已配置 DeepSeek Key（仅存在当前浏览器 localStorage，双标签共用；调用按你账号计费）'
+    : '未配置时使用内置模拟 AI。Key 只保存在你自己的浏览器，不发送到任何服务器，也不泄露给他人。';
+}
+$('#btnSaveKey').onclick=()=>{
+  const k=$('#aiKey').value.trim();
+  if(k){ localStorage.setItem('discuss_dskey',k); $('#aiKeyState').textContent='✅ 已保存并启用真实 AI（DeepSeek）。'; }
+  else{ localStorage.removeItem('discuss_dskey'); $('#aiKeyState').textContent='已清除，改用内置模拟 AI。'; }
+  $('#aiKey').value='';
+};
+loadAiKeyUI();
 
 // 初始化（若此前已在 localStorage 有口令则提示）
 </script>
