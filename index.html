@@ -95,6 +95,17 @@ input{font-family:inherit}
 #endState{font-size:13px;color:#555;margin:10px 0 4px}
 .confirm-row{display:flex;gap:10px;margin-top:14px}
 
+/* ---------- 选择纳入总结弹层 ---------- */
+#sumOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:60}
+#sumBox{background:#fff;border-radius:16px;padding:22px 24px;width:460px;max-width:92vw}
+#sumBox h3{margin-bottom:6px}
+#sumPickList{max-height:46vh;overflow-y:auto;margin:10px 0;padding-right:4px}
+.sum-pick-item{display:block;padding:8px 10px;border:1px solid #eee;border-radius:10px;margin-bottom:8px;font-size:13px;cursor:pointer}
+.sum-pick-item:hover{background:#faf9ff}
+.sum-pick-item .sum-pick-top{display:flex;align-items:center;gap:6px;color:#888}
+.sum-pick-item .sum-pick-body{color:#333;margin-top:5px;white-space:pre-wrap;word-break:break-word}
+.sum-pick-item input{margin:0}
+
 /* ---------- 复盘视图 ---------- */
 #reviewView{flex:1;display:flex;flex-direction:column;background:#f6f5fb}
 #reviewNav{display:flex;gap:10px;padding:12px 14px;background:#fff;border-bottom:1px solid #eceaf7}
@@ -221,6 +232,19 @@ input{font-family:inherit}
   </div>
 </div>
 
+<!-- 选择纳入总结 -->
+<div id="sumOverlay" class="hidden">
+  <div id="sumBox">
+    <h3>🧠 选择要一起总结的发言</h3>
+    <div style="font-size:12px;color:#888;margin-bottom:4px">勾选要纳入本次 AI 总结的发言（默认可全选尚未总结的）· <b>可多条一起总结</b></div>
+    <div id="sumPickList"></div>
+    <div class="confirm-row">
+      <button class="btn secondary" id="btnSumCancel" style="margin:0">取消</button>
+      <button class="btn" id="btnSumConfirm" style="margin:0">✨ 确认总结</button>
+    </div>
+  </div>
+</div>
+
 <!-- 复盘视图 -->
 <div id="reviewView" class="hidden">
   <div id="reviewNav">
@@ -283,7 +307,9 @@ const AI = {
     let core = clean[0]||text.slice(0,20);
     let points = clean.slice(1,4);
     if(points.length===0) points = [text.length>20?text.slice(0,26)+'…':text];
-    return {core, points};
+    let issue='';
+    if(!/因为|所以|因此|由于|于是|可见|证明|足以说明|主要因为/.test(text)) issue='这段发言提出了观点，但缺少具体论据，论点支撑略显不足。';
+    return {core, points, issue};
   },
   _mockComment(sumText){
     const t = sumText;
@@ -297,10 +323,10 @@ const AI = {
     if(!this._hasKey()) return this._mockSummarize(text);
     try{
       const out=await this._chat(
-        '你是两人讨论的中立整理师。只根据用户文本提炼总结，不评价、不站队、不修改立场。返回严格 JSON：{"core":"一句核心观点","points":["论据1","论据2"]}。points 最多 3 条，不足则给 1 条。',
+        '你是两人讨论的中立整理师。只根据用户文本提炼总结，不评价、不站队、不修改立场。返回严格 JSON：{"core":"一句核心观点","points":["论据1","论据2"],"issue":"论据支撑问题"}。points 最多 3 条。若论点明显无法被所给论据支撑（论据缺失、答非所问、逻辑断裂、前后矛盾），请用 issue 用一句话明确指出；若支撑充分则 issue 为空字符串。',
         '待总结的发言段：'+text);
       const m=out.match(/\{[\s\S]*\}/);
-      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3)}; }
+      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||'')}; }
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
       return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4)};
     }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text); }
@@ -430,18 +456,20 @@ function renderSummaryCard(sm, msg){
       '<span class="hov" data-hist="'+idx+'">v'+(idx+1)+(idx===sm.rev?'（当前）':'')+'</span>'
     ).join(' · ')+'</div>';
   }
+  const n=(sm.ids||[sm.messageId]).length;
   card.innerHTML=
-    '<div class="head">🤖 AI 总结 · '+esc(msg.name)+'<span class="badge">v'+(sm.rev+1)+'</span></div>'+
+    '<div class="head">🤖 AI 总结 · '+esc(msg.name||'')+(n>1?'（涵盖 '+n+' 条发言）':'')+'<span class="badge">v'+(sm.rev+1)+'</span></div>'+
     '<div class="body"><span class="field">【核心观点】</span>'+esc(v.core)+'</div>'+
-    (v.points?'<div class="body"><span class="field">【论据 / 细节】</span>'+v.points.map(p=>'<br>· '+esc(p)).join('')+'</div>':'')+
+    (v.points&&v.points.length?'<div class="body"><span class="field">【论据 / 细节】</span>'+v.points.map(p=>'<br>· '+esc(p)).join('')+'</div>':'')+
+    (v.issue?'<div class="body" style="color:#be2346"><span class="field" style="color:#be2346">⚠️ 论据支撑问题</span>'+esc(v.issue)+'</div>':'')+
     '<div class="btns">'+
-      '<button class="sb-redo" data-redo="'+msg.id+'">🧠 重新生成</button>'+
-      '<button class="sb-fill" data-fill="'+msg.id+'">📝 补充</button>'+
-      '<button class="sumcard-btn" data-hist-view="'+msg.id+'">🕘 历史版本</button>'+
+      '<button class="sb-redo" data-redo="'+sm.id+'">🧠 重新生成</button>'+
+      '<button class="sb-fill" data-fill="'+sm.messageId+'">📝 补充</button>'+
+      '<button class="sumcard-btn" data-hist-view="'+sm.id+'">🕘 历史版本</button>'+
     '</div>'+hist;
-  card.querySelectorAll('[data-redo]').forEach(b=>b.onclick=()=>redoSummary(msg.id));
-  card.querySelectorAll('[data-fill]').forEach(b=>b.onclick=()=>startFill(msg.id));
-  card.querySelectorAll('[data-hist-view]').forEach(b=>b.onclick=()=>toggleHist(msg.id));
+  card.querySelectorAll('[data-redo]').forEach(b=>b.onclick=()=>redoSummary(sm.id));
+  card.querySelectorAll('[data-fill]').forEach(b=>b.onclick=()=>startFill(sm.messageId));
+  card.querySelectorAll('[data-hist-view]').forEach(b=>b.onclick=()=>toggleHist(sm.id));
   card.querySelectorAll('[data-hist]').forEach(b=>b.onclick=()=>{ sm.rev=parseInt(b.dataset.hist); renderStream(); });
   return card;
 }
@@ -463,7 +491,7 @@ function sendDiscuss(content, withSummary){
   S.messages.push(m);
   renderStream();
   broadcast({type:'msg',m});
-  if(withSummary) genSummary(m);
+  return id;
 }
 function sendDanmaku(content){
   const m={id:uid(),name:S.me.name,ts:now(),content,channel:'danmaku'};
@@ -481,12 +509,16 @@ function spawnDanmaku(text){
   layer.appendChild(d);
   setTimeout(()=>d.remove(), 7000);
 }
-async function genSummary(msg){
+async function genSummary(ids){
+  const arr = S.messages.filter(m=>ids.includes(m.id)).sort((a,b)=>a.ts-b.ts);
+  if(!arr.length) return;
+  const anchor = arr[arr.length-1];
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
-    const res=await AI.summarize(msg.content);
-    const sm={messageId:msg.id, core:res.core, points:res.points, rev:0, versions:[{core:res.core, points:res.points}]};
+    const text = arr.map(m=>m.name+'：'+m.content).join('\n');
+    const res = await AI.summarize(text);
+    const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||''}]};
     S.summaries.push(sm);
     renderStream();
     broadcast({type:'summary',sm});
@@ -494,18 +526,17 @@ async function genSummary(msg){
     $('#aiBusy').classList.add('hidden');
   }
 }
-async function redoSummary(msgId){
-  const msg=S.messages.find(m=>m.id===msgId);
-  const sm=S.summaries.find(x=>x.messageId===msgId); if(!sm||!msg) return;
+async function redoSummary(smId){
+  const sm=S.summaries.find(x=>x.id===smId); if(!sm) return;
+  const arr=S.messages.filter(m=>(sm.ids||[sm.messageId]).includes(m.id)).sort((a,b)=>a.ts-b.ts);
+  if(!arr.length) return;
+  const text=arr.map(m=>m.name+'：'+m.content).join('\n');
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
-  // 合并该段原文+所有补充
-  const full = S.messages.filter(m=>m.appendTo===msgId).map(m=>m.content);
-  const text = msg.content + (full.length?'（补充：'+full.join('；')+'）':'');
   $('#aiBusy').classList.remove('hidden');
   try{
     const res=await AI.summarize(text);
     sm.rev=sm.versions.length;
-    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points});
+    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||''});
   }finally{
     $('#aiBusy').classList.add('hidden');
   }
@@ -541,8 +572,9 @@ function doInput(fromFill){
     $('#input').dataset.fill=''; $('#input').placeholder='输入你的观点…（Enter 发送）';
     renderStream(); broadcast({type:'msg',m});
     $('#input').value='';
-    // 补充后自动重新总结该段
-    if(S.summaries.find(x=>x.messageId===fillId)) redoSummary(fillId);
+    // 补充后自动并入所属总结并重新生成
+    const fsm=S.summaries.find(x=>x.messageId===fillId);
+    if(fsm){ if(!(fsm.ids||[fsm.messageId]).includes(m.id)) fsm.ids.push(m.id); redoSummary(fsm.id); }
     return;
   }
   if(mode==='discuss'){ sendDiscuss(val,false); }
@@ -550,10 +582,35 @@ function doInput(fromFill){
   $('#input').value='';
 }
 $('#btnSend').onclick=()=>doInput();
+/* 选择纳入总结：可多条一起总结 */
+function openSumPicker(){
+  const covered=new Set();
+  S.summaries.forEach(sm=>(sm.ids||[sm.messageId]).forEach(i=>covered.add(i)));
+  const cands=S.messages.filter(m=>m.channel==='discuss'&&!covered.has(m.id)).sort((a,b)=>a.ts-b.ts);
+  if(!cands.length){ showAiErr('当前没有可纳入总结的新发言（未总结的都已生成过卡片）。'); return; }
+  const sel={};
+  $('#sumPickList').innerHTML='';
+  cands.forEach(m=>{
+    sel[m.id]=true;
+    const row=document.createElement('label');
+    row.className='sum-pick-item';
+    row.innerHTML='<div class="sum-pick-top"><input type="checkbox" data-pid="'+m.id+'" checked><b>'+esc(m.name||'好友')+'</b><span class="ts">'+fmtTime(m.ts)+'</span>'+(m.appendTo?'<span class="appendTag">· 补充</span>':'')+'</div><div class="sum-pick-body">'+esc(m.content)+'</div>';
+    row.querySelector('input').onchange=()=>{ sel[m.id]=row.querySelector('input').checked; };
+    $('#sumPickList').appendChild(row);
+  });
+  $('#sumOverlay').classList.remove('hidden');
+  $('#btnSumConfirm').onclick=()=>{
+    $('#sumOverlay').classList.add('hidden');
+    const ids=cands.filter(m=>sel[m.id]).map(m=>m.id);
+    if(ids.length) genSummary(ids);
+    else showAiErr('未选择任何发言，未生成总结。');
+  };
+  $('#btnSumCancel').onclick=()=>{ $('#sumOverlay').classList.add('hidden'); };
+}
 $('#btnSendSum').onclick=()=>{
-  const val=$('#input').value.trim(); if(!val) return;
-  $('#input').value='';
-  sendDiscuss(val,true);
+  const val=$('#input').value.trim();
+  if(val){ $('#input').value=''; sendDiscuss(val); }
+  openSumPicker();
 };
 $('#btnDanmaku').onclick=()=>doInput();
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter') doInput(); });
@@ -848,7 +905,7 @@ bc.onmessage=(e)=>{
       if(!S.messages.find(x=>x.id===d.m.id)){ S.messages.push(d.m); renderStatus(); renderStream(); }
       break;
     case 'summary':
-      if(!S.summaries.find(x=>x.messageId===d.sm.messageId)){ S.summaries.push(d.sm); renderStream(); }
+      if(!S.summaries.find(x=>x.id===d.sm.id)){ S.summaries.push(d.sm); renderStream(); }
       break;
     case 'comment':
       if(!S.comments.find(x=>x.id===d.cm.id)){ S.comments.push(d.cm); renderStream(); }
