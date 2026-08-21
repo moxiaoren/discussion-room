@@ -53,6 +53,11 @@ input{font-family:inherit}
 .ev-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-top:6px;cursor:pointer}
 .ev-toggle input{accent-color:#6d28d9}
 .ev-block{background:#f6f8ff;border:1px solid #dfe7ff;border-radius:8px;padding:6px 8px;margin:4px 0}
+.msg-ev-btn{display:block;margin:4px 0 0 8px;font-size:11px;color:#2563eb;background:none;border:none;cursor:pointer;padding:0;opacity:.75}
+.msg-ev-btn:hover{opacity:1;text-decoration:underline}
+.msg-ev{margin:6px 0 0 8px;font-size:12px;color:#333;background:#f6f8ff;border:1px solid #dfe7ff;border-radius:8px;padding:6px 10px;line-height:1.7}
+.msg-ev-close{display:inline-block;margin-top:4px;font-size:11px;color:#999;background:none;border:none;cursor:pointer;padding:0}
+.msg-ev-close:hover{color:#be2346}
 
 /* ---------- 大厅（进入） ---------- */
 #lobby{flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef0ff,#fbeaff)}
@@ -269,7 +274,6 @@ input{font-family:inherit}
       <button class="btn secondary" id="btnSaveKey" style="width:auto;margin:0;white-space:nowrap">保存</button>
     </div>
     <div class="hint" id="aiKeyState"></div>
-    <label class="ev-toggle"><input type="checkbox" id="evToggle"> 总结时附带「🔍 证据检索指引」（只给核实渠道与关键词，不编造事实）</label>
     <div class="hint">创建方会自动生成一个口令；好友选「我有口令」输入即可。<br>两个标签页共用同一浏览器，数据会实时同步。</div>
   </div>
 </div>
@@ -322,6 +326,7 @@ input{font-family:inherit}
     <h3>🧠 总结我的发言</h3>
     <div style="font-size:12px;color:#888;margin-bottom:4px">只列 <b>你已说的</b> 发言，勾选一起总结（表达「我说完了」，请对方理解并回复）。AI 会结合<b>此前的讨论</b>判断你在回应什么、是否跑题。</div>
     <div id="sumPickList"></div>
+    <label class="ev-toggle" style="margin:8px 0 0"><input type="checkbox" id="sumEv"> 🔍 本次总结附带「证据检索指引」（给你核实渠道与关键词，不编造事实）</label>
     <div class="confirm-row">
       <button class="btn secondary" id="btnSumCancel" style="margin:0">取消</button>
       <button class="btn" id="btnSumConfirm" style="margin:0">✨ 确认总结</button>
@@ -446,6 +451,23 @@ const AI = {
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
       return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4), issue:'', topic:'', clarify:'', focus:'', offtopic:'', evidence:{sourceTypes:[],keywords:[]}};
     }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text, bg, ev); }
+  },
+  async evidence(text){
+    if(!this._hasKey()) return this._mockEvidence(text);
+    try{
+      const out=await this._chat(
+        '你是资料检索助手。请为以下观点生成**证据检索指引**（**严格禁止编造任何具体事实、数据、链接**）：给出建议核实的资料渠道类型 sourceTypes（2-4类，如权威/行业报告、学术或期刊文献、官方/政府统计数据、主流媒体深度报道、可查证案例资料）和推荐检索关键词 keywords（3-5个，可细分/英文）。返回严格 JSON：{"sourceTypes":[...],"keywords":[...]}。',
+        '观点的内容：'+text);
+      const m=out.match(/\{[\s\S]*\}/);
+      if(m){ const j=JSON.parse(m[0]); return {sourceTypes:(Array.isArray(j.sourceTypes)?j.sourceTypes.map(String):[]).slice(0,4), keywords:(Array.isArray(j.keywords)?j.keywords.map(String):[]).slice(0,5)}; }
+      throw new Error('parse fail');
+    }catch(e){ console.warn('deepseek evidence fail', e); showAiErr('证据引导：'+(e&&e.message||e)); return this._mockEvidence(text); }
+  },
+  _mockEvidence(text){
+    const first=(text||'').replace(/^[^：:]+[：:]\s*/,'').split(/[，。！？、；:\n\s]+/).filter(x=>x&&x.trim())[0]||text.slice(0,14);
+    const kw=(text||'').replace(/^[^：:]+[：:]\s*/,'').split(/[，。！？、；:\s\n]+/).filter(w=>w.length>=3).slice(0,4);
+    return {sourceTypes:['权威行业报告 / 白皮书','学术或期刊文献','官方与政府统计数据','主流媒体深度报道'],
+      keywords: kw.length?kw:[(first||'').slice(0,12)+' 相关关键词']};
   },
   async comment(text){
     if(!this._hasKey()) return this._mockComment(text);
@@ -620,7 +642,14 @@ function renderStream(){
     d.dataset.ts=m.ts;
     const appendTag = m.appendTo ? '<span class="appendTag">· 补充</span>' : '';
     const meta = '<div class="meta">'+(isMe?'':'')+(m.name||'')+' <span class="ts">'+fmtTime(m.ts)+'</span>'+appendTag+'</div>';
-    d.innerHTML = meta + '<div class="bubble">'+esc(m.content)+'</div>';
+    const evBtn = (m.channel==='discuss') ? '<button class="msg-ev-btn" data-id="'+m.id+'" title="为这段话生成证据检索指引">🔍 证据</button>' : '';
+    const evCard = (m.evidence && ((m.evidence.sourceTypes&&m.evidence.sourceTypes.length)||(m.evidence.keywords&&m.evidence.keywords.length)))
+      ? '<div class="msg-ev"><b>🔍 证据指引</b>'+
+        (m.evidence.sourceTypes&&m.evidence.sourceTypes.length?'<br><b>建议核实渠道：</b>'+m.evidence.sourceTypes.map(esc).join('、'):'')+
+        (m.evidence.keywords&&m.evidence.keywords.length?'<br><b>推荐关键词：</b>'+m.evidence.keywords.map(esc).join('、'):'')+
+        '<div style="color:#999;font-size:11px;margin-top:3px">仅给方向与关键词，请自行查证。</div>'+
+        '<button class="msg-ev-close" data-id="'+m.id+'">✕ 收起</button></div>' : '';
+    d.innerHTML = meta + '<div class="bubble">'+esc(m.content)+'</div>'+ evBtn + evCard;
     el.appendChild(d);
     // 若该消息有 summary，紧跟渲染
     const sm = S.summaries.find(x=>x.messageId===m.id);
@@ -713,7 +742,7 @@ function spawnDanmaku(text){
   layer.appendChild(d);
   setTimeout(()=>d.remove(), 7000);
 }
-async function genSummary(ids){
+async function genSummary(ids, ev){
   const arr = S.messages.filter(m=>ids.includes(m.id)).sort((a,b)=>a.ts-b.ts);
   if(!arr.length) return;
   const anchor = arr[arr.length-1];
@@ -724,7 +753,7 @@ async function genSummary(ids){
   $('#aiBusy').classList.remove('hidden');
   try{
     const text = arr.map(m=>m.name+'：'+m.content).join('\n');
-    const res = await AI.summarize(text, bg, localStorage.getItem('discuss_ev')==='1');
+    const res = await AI.summarize(text, bg, !!ev);
     const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence, rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence}]};
     S.summaries.push(sm);
     persistState();
@@ -745,7 +774,7 @@ async function redoSummary(smId){
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
-    const res=await AI.summarize(text, bg, localStorage.getItem('discuss_ev')==='1');
+    const res=await AI.summarize(text, bg, false);
     sm.rev=sm.versions.length;
     sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence});
     persistState();
@@ -815,7 +844,7 @@ function openSumPicker(){
   $('#btnSumConfirm').onclick=()=>{
     $('#sumOverlay').classList.add('hidden');
     const ids=cands.filter(m=>sel[m.id]).map(m=>m.id);
-    if(ids.length) genSummary(ids);
+    if(ids.length) genSummary(ids, $('#sumEv').checked);
     else showAiErr('未选择任何发言，未生成总结。');
   };
   $('#btnSumCancel').onclick=()=>{ $('#sumOverlay').classList.add('hidden'); };
@@ -827,6 +856,20 @@ $('#btnSendSum').onclick=()=>{
 };
 $('#btnDanmaku').onclick=()=>doInput();
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter') doInput(); });
+
+/* 消息级「证据引导」事件委托 */
+document.addEventListener('click',(e)=>{
+  const btn=e.target.closest('.msg-ev-btn');
+  if(btn){ genMsgEvidence(btn.dataset.id); return; }
+  const cl=e.target.closest('.msg-ev-close');
+  if(cl){ const mm=S.messages.find(x=>x.id===cl.dataset.id); if(mm){ mm.evidence=null; persistState(); renderStream(); } }
+});
+async function genMsgEvidence(id){
+  const m=S.messages.find(x=>x.id===id); if(!m) return;
+  $('#aiBusy').classList.remove('hidden');
+  try{ m.evidence = await AI.evidence(m.content); persistState(); renderStream(); }
+  finally{ $('#aiBusy').classList.add('hidden'); }
+}
 
 /* ================= 结束流程（双方确认） ================= */
 function askEnd(){
@@ -1140,7 +1183,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.3.1';
+const APP_VERSION='2.3.2';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1190,8 +1233,6 @@ $('#btnSaveKey').onclick=()=>{
   else{ localStorage.removeItem('discuss_dskey'); $('#aiKeyState').textContent='已清除，改用内置模拟 AI。'; }
   $('#aiKey').value='';
 };
-function loadEvUI(){ const on = localStorage.getItem('discuss_ev')==='1'; $('#evToggle').checked = on; }
-$('#evToggle').onchange=()=>{ localStorage.setItem('discuss_ev', $('#evToggle').checked?'1':'0'); };
 loadAiKeyUI();
 loadState();
 loadEvUI();
