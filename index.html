@@ -698,6 +698,9 @@ function renderSummaryCard(sm, msg){
       '<span class="hov" data-hist="'+idx+'">v'+(idx+1)+(idx===sm.rev?'（当前）':'')+'</span>'
     ).join(' · ')+'</div>';
   }
+  const ownerId0=(sm.ids||[sm.messageId])[0];
+  const ownerMsg=S.messages.find(x=>x.id===ownerId0);
+  const ownerName=ownerMsg?ownerMsg.name:'';
   const n=(sm.ids||[sm.messageId]).length;
   card.innerHTML=
     '<div class="head">🤖 AI 总结 · '+esc(msg.name||'')+(n>1?'（涵盖 '+n+' 条发言）':'')+'<span class="badge">v'+(sm.rev+1)+'</span></div>'+
@@ -714,8 +717,8 @@ function renderSummaryCard(sm, msg){
     (v.clarify?'<div class="body" style="color:#1d4ed8"><span class="field" style="color:#1d4ed8">💬 建议补充</span>'+esc(v.clarify)+'</div>':'')+
     (v.issue?'<div class="body" style="color:#be2346"><span class="field" style="color:#be2346">⚠️ 论据支撑问题</span>'+esc(v.issue)+'</div>':'')+
     '<div class="btns">'+
-      '<button class="sb-redo" data-redo="'+sm.id+'">🧠 重新生成</button>'+
-      '<button class="sb-fill" data-fill="'+sm.messageId+'">📝 补充</button>'+
+      (ownerName===S.me.name?'<button class="sb-redo" data-redo="'+sm.id+'">🧠 重新生成</button>':'')+
+      (ownerName===S.me.name?'<button class="sb-fill" data-fill="'+sm.messageId+'">📝 补充</button>':'')+
       '<button class="sumcard-btn" data-hist-view="'+sm.id+'">🕘 历史版本</button>'+
     '</div>'+hist;
   card.querySelectorAll('[data-redo]').forEach(b=>b.onclick=()=>redoSummary(sm.id));
@@ -1296,7 +1299,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.6.0';
+const APP_VERSION='2.6.1';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
