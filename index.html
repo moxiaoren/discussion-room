@@ -50,6 +50,9 @@ input{font-family:inherit}
 .hist-msg{margin:2px 0}
 .hist-sum{margin:4px 0;color:#6d28d9}
 .hist-verdict{margin-top:6px;color:#555;background:#f7f3ff;border-radius:8px;padding:6px 8px}
+.ev-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-top:6px;cursor:pointer}
+.ev-toggle input{accent-color:#6d28d9}
+.ev-block{background:#f6f8ff;border:1px solid #dfe7ff;border-radius:8px;padding:6px 8px;margin:4px 0}
 
 /* ---------- 大厅（进入） ---------- */
 #lobby{flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef0ff,#fbeaff)}
@@ -266,6 +269,7 @@ input{font-family:inherit}
       <button class="btn secondary" id="btnSaveKey" style="width:auto;margin:0;white-space:nowrap">保存</button>
     </div>
     <div class="hint" id="aiKeyState"></div>
+    <label class="ev-toggle"><input type="checkbox" id="evToggle"> 总结时附带「🔍 证据检索指引」（只给核实渠道与关键词，不编造事实）</label>
     <div class="hint">创建方会自动生成一个口令；好友选「我有口令」输入即可。<br>两个标签页共用同一浏览器，数据会实时同步。</div>
   </div>
 </div>
@@ -391,7 +395,7 @@ const AI = {
   },
   /* ---- 模拟回退 ---- */
   _pick(sentences){ return sentences.filter(s=>s.length>=6)||[]; },
-  _mockSummarize(text,bg){
+  _mockSummarize(text,bg,ev){
     const noName = text.replace(/^[^：:]+[：:]\s*/,'');
     const clean = noName.replace(/[，。！？、；：\n]+/g,'|').split('|').map(s=>s.trim()).filter(s=>s);
     let core = clean[0]||noName.slice(0,20);
@@ -402,7 +406,13 @@ const AI = {
     const hasBg = !!(bg && String(bg).trim());
     let focus = hasBg ? '承接之前的话题，进一步表达自己的观点' : '';
     let topic = hasBg ? '' : '围绕「'+(core||'').slice(0,18)+'…」展开的讨论';
-    return {core, points, issue, topic, clarify:'', focus, offtopic:''};
+    let evidence={sourceTypes:[],keywords:[]};
+    if(ev){
+      evidence={sourceTypes:['权威行业报告 / 白皮书','学术或期刊文献','官方与政府统计数据','主流媒体深度报道'],
+        keywords:(core||'').split(/[，。！？、;\s]+/).filter(w=>w.length>=3).slice(0,4)};
+      if(!evidence.keywords.length) evidence.keywords=[(core||'').slice(0,12)+' 相关关键词'];
+    }
+    return {core, points, issue, topic, clarify:'', focus, offtopic:'', evidence};
   },
   _mockComment(sumText){
     const t = sumText;
@@ -412,22 +422,30 @@ const AI = {
     return {style:'good', text:'✨ 这一段表达得很清楚，双方思路有了新进展。'};
   },
   /* ---- 对外（异步） ---- */
-  async summarize(text, bg){
+  async summarize(text, bg, ev){
     const hasBg = !!(bg && String(bg).trim());
-    if(!this._hasKey()) return this._mockSummarize(text, bg);
-    const sys = hasBg
+    if(!this._hasKey()) return this._mockSummarize(text, bg, ev);
+    const EV_EXT = '另外请额外生成 **evidence 证据检索指引**（帮助发言者去核实观点，**不编造任何具体事实/数据/链接**）：sourceTypes 为 2-4 个建议核实的资料渠道类型（如权威/行业报告、学术/期刊文献、官方/政府统计数据、主流媒体深度报道、可查证的案例资料）；keywords 为 3-5 个推荐检索关键词（可含细分/英文）。返回 JSON 额外带字段 "evidence":{"sourceTypes":[...],"keywords":[...]}；若不需要证据指引，evidence 返回空对象 {"sourceTypes":[],"keywords":[]}。';
+    let sys = hasBg
       ? '你是两人讨论的中立整理师。我将给你「之前对话背景」和发言者这次要总结的「新发言」。理解的核心是**准确把握发言者想表达什么、不要曲解**。请：1) 提炼新发言核心观点 core 和论据 points（points 最多3条）；2) 判断新发言在回应背景中的哪个话题/哪句观点，用 focus 一句话说明（如"回应你关于做MVP的提议，补充了时间与人力约束"；无明显对应则写"承接对当前话题的进一步阐述"）；3) 判断是否跑题——**反驳、提出反例、质疑、补充、举相反例子，都是围绕当前话题的正常交流，不算跑题**；只有明显偏离当前话题、另起不相干话题才算跑题，确实跑题才用 offtopic 一句提示，否则空字符串；4) 若发言语义不明确、无法确定其意图、或可能被曲解，用 clarify 一句向发言者提出提示（如"你是指…吗？能否补充说明"），让发言者明确或确认，否则 clarify 空字符串；论点明显缺乏论据支撑则用 issue 一句指出，否则空。不评价、不站队。返回严格 JSON：{"topic":"","core":"...","points":[...],"issue":"...","clarify":"...","focus":"...","offtopic":"..."}。'
       : '你是两人讨论的中立整理师。这是**讨论的开头**，发言者的第一段表达，它将决定整个讨论的方向，请详尽总结。请：1) 提炼**讨论意图 / 话题** topic——这段想围绕什么核心问题讨论、想达成什么目的、重点想表达什么（一句话概括）；2) 提炼核心观点 core 和论据 points（最多3条）；3) 判断开头的意图与表达是否**足够清晰、能支撑起后续讨论**：若含糊、指向不明、可能被曲解，用 clarify 一句向发言者提出"建议补充/明确"的提示；若清晰则 clarify 为空字符串；4) 论点明显缺乏论据支撑用 issue 一句指出，否则空。**不要**判断是否回应、不要判断跑题（focus 与 offtopic 一律返回空字符串）。不评价、不站队。返回严格 JSON：{"topic":"...","core":"...","points":[...],"issue":"...","clarify":"...","focus":"","offtopic":""}。';
+    if(ev) sys += EV_EXT;
     try{
       const out=await this._chat(sys,
         hasBg
           ? '之前对话背景：\n'+(bg||'')+'\n\n本次要总结的发言：\n'+text
           : '本次要总结的发言（讨论开头，无之前上下文）：\n'+text);
       const m=out.match(/\{[\s\S]*\}/);
-      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||''), topic:hasBg?'':String(j.topic||''), clarify:String(j.clarify||''), focus:hasBg?String(j.focus||''):'', offtopic:hasBg?String(j.offtopic||''):''}; }
+      if(m){ const j=JSON.parse(m[0]);
+        const ev2 = (ev && j.evidence && typeof j.evidence==='object')
+          ? {sourceTypes:(Array.isArray(j.evidence.sourceTypes)?j.evidence.sourceTypes.map(String):[]).slice(0,4),
+             keywords:(Array.isArray(j.evidence.keywords)?j.evidence.keywords.map(String):[]).slice(0,5)}
+          : {sourceTypes:[],keywords:[]};
+        return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||''), topic:hasBg?'':String(j.topic||''), clarify:String(j.clarify||''), focus:hasBg?String(j.focus||''):'', offtopic:hasBg?String(j.offtopic||''):'', evidence:ev2};
+      }
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
-      return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4), issue:'', topic:'', clarify:'', focus:'', offtopic:''};
-    }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text, bg); }
+      return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4), issue:'', topic:'', clarify:'', focus:'', offtopic:'', evidence:{sourceTypes:[],keywords:[]}};
+    }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text, bg, ev); }
   },
   async comment(text){
     if(!this._hasKey()) return this._mockComment(text);
@@ -637,6 +655,11 @@ function renderSummaryCard(sm, msg){
     '<div class="body"><span class="field">【核心观点】</span>'+esc(v.core)+'</div>'+
     (v.points&&v.points.length?'<div class="body"><span class="field">【论据 / 细节】</span>'+v.points.map(p=>'<br>· '+esc(p)).join('')+'</div>':'')+
     (v.topic?'<div class="body"><span class="field">🧭 讨论意图</span>'+esc(v.topic)+'</div>':'')+
+    (v.evidence && ((v.evidence.sourceTypes&&v.evidence.sourceTypes.length)||(v.evidence.keywords&&v.evidence.keywords.length))?
+      '<div class="body ev-block"><span class="field">🔍 证据检索指引</span>'+
+      (v.evidence.sourceTypes&&v.evidence.sourceTypes.length?'<br><b>建议核实渠道：</b>'+v.evidence.sourceTypes.map(esc).join('、'):'')+
+      (v.evidence.keywords&&v.evidence.keywords.length?'<br><b>推荐关键词：</b>'+v.evidence.keywords.map(esc).join('、'):'')+
+      '<div style="color:#999;font-size:11px;margin-top:4px">仅给核实方向与关键词，请到搜索引擎/资料平台自行查证，不提供具体事实。</div></div>':'')+
     (v.focus?'<div class="body"><span class="field">🎯 在回应</span>'+esc(v.focus)+'</div>':'')+
     (v.offtopic?'<div class="body" style="color:#b45309"><span class="field" style="color:#b45309">↔️ 是否跑题</span>'+esc(v.offtopic)+'</div>':'')+
     (v.clarify?'<div class="body" style="color:#1d4ed8"><span class="field" style="color:#1d4ed8">💬 建议补充</span>'+esc(v.clarify)+'</div>':'')+
@@ -701,8 +724,8 @@ async function genSummary(ids){
   $('#aiBusy').classList.remove('hidden');
   try{
     const text = arr.map(m=>m.name+'：'+m.content).join('\n');
-    const res = await AI.summarize(text, bg);
-    const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||''}]};
+    const res = await AI.summarize(text, bg, localStorage.getItem('discuss_ev')==='1');
+    const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence, rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence}]};
     S.summaries.push(sm);
     persistState();
     renderStream();
@@ -722,9 +745,9 @@ async function redoSummary(smId){
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
-    const res=await AI.summarize(text, bg);
+    const res=await AI.summarize(text, bg, localStorage.getItem('discuss_ev')==='1');
     sm.rev=sm.versions.length;
-    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||''});
+    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||'', topic:res.topic||'', clarify:res.clarify||'', focus:res.focus||'', offtopic:res.offtopic||'', evidence:res.evidence==null?null:res.evidence});
     persistState();
   }finally{
     $('#aiBusy').classList.add('hidden');
@@ -1117,7 +1140,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.3.0';
+const APP_VERSION='2.3.1';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1167,8 +1190,11 @@ $('#btnSaveKey').onclick=()=>{
   else{ localStorage.removeItem('discuss_dskey'); $('#aiKeyState').textContent='已清除，改用内置模拟 AI。'; }
   $('#aiKey').value='';
 };
+function loadEvUI(){ const on = localStorage.getItem('discuss_ev')==='1'; $('#evToggle').checked = on; }
+$('#evToggle').onchange=()=>{ localStorage.setItem('discuss_ev', $('#evToggle').checked?'1':'0'); };
 loadAiKeyUI();
 loadState();
+loadEvUI();
 
 // 初始化（若此前已在 localStorage 有口令则提示）
 </script>
