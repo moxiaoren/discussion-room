@@ -16,6 +16,22 @@ input{font-family:inherit}
 #topbar .brand{font-weight:700;font-size:16px}
 #topbar .sub{font-size:12px;opacity:.85;margin-top:2px}
 #topMembers{font-size:12px;background:rgba(255,255,255,.18);padding:4px 10px;border-radius:20px}
+.tb-btn{background:rgba(255,255,255,.2);color:#fff;border-radius:8px;padding:4px 10px;font-size:15px;cursor:pointer}
+.tb-btn:hover{background:rgba(255,255,255,.32)}
+.ver-badge{font-size:11px;background:rgba(255,255,255,.16);padding:3px 8px;border-radius:12px;cursor:pointer}
+#updateBanner{background:linear-gradient(90deg,#f59e0b,#ef4444);color:#fff;padding:8px 16px;font-size:13px;display:flex;align-items:center;gap:12px;z-index:70}
+#updateBanner.hidden{display:none}
+#updateBanner button{background:#fff;color:#ef4444;font-weight:700;border:none;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer}
+#helpOverlay{position:fixed;inset:0;background:rgba(20,10,40,.45);display:flex;align-items:center;justify-content:center;z-index:65}
+#helpBox{background:#fff;border-radius:16px;padding:22px 26px;width:520px;max-width:92vw;max-height:82vh;overflow-y:auto}
+#helpBox h3{margin-bottom:10px}
+#helpBody{font-size:13px;line-height:1.7;color:#444}
+#helpBody h4{color:#6d28d9;margin:14px 0 6px;font-size:14px}
+#helpBody ol,#helpBody ul{margin:4px 0 4px 20px}
+#helpBody li{margin:3px 0}
+#helpBody p{margin:4px 0}
+#guideBar{margin:0;background:#fff7e0;border-bottom:1px solid #f5e2a8;color:#8a6d0a;font-size:12px;padding:8px 14px;line-height:1.7}
+#guideBar.hidden{display:none}
 
 /* ---------- 大厅（进入） ---------- */
 #lobby{flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef0ff,#fbeaff)}
@@ -165,7 +181,44 @@ input{font-family:inherit}
     <div class="brand">二人讨论间 · 在线版</div>
     <div class="sub" id="topSub">等待进入</div>
   </div>
-  <div id="topMembers"></div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button id="btnHelp" class="tb-btn" title="使用说明">❓</button>
+    <span id="verBadge" class="ver-badge" title="当前版本 · 点击可重新检查更新">v?</span>
+    <span id="topMembers"></span>
+  </div>
+</div>
+
+<!-- 更新横幅 -->
+<div id="updateBanner" class="hidden"><span id="updateText"></span><button id="btnUpdate">🔄 立即更新</button></div>
+
+<!-- 使用说明弹层 -->
+<div id="helpOverlay" class="hidden">
+  <div id="helpBox">
+    <h3>📖 使用说明·二人讨论间</h3>
+    <div id="helpBody">
+      <h4>① 怎么开两个"人"</h4>
+      <ol>
+        <li>在 <b>同一个浏览器</b> 开两个标签页打开此页面；</li>
+        <li>一个标签填昵称点 <b>「＋创建讨论间」</b> 当甲方，会显示 6 位口令；</li>
+        <li>另一个标签点 <b>「🔑 我有口令」</b> 输入口令当乙方，即可双人实时对话</li>
+      </ol>
+      <h4>② 三种表达通道</h4>
+      <ul>
+        <li><b>💬 讨论</b>：正文对话，会进 AI 总结与复盘；</li>
+        <li><b>🎤 弹幕</b>：场外吐槽，飘过展示，<b>永不进</b>总结/复盘，放心说；</li>
+        <li><b>🤖 AI</b>：可配 DeepSeek Key 让 AI 做真实总结与复盘</li>
+      </ul>
+      <h4>③ AI 总结怎么用</h4>
+      <p>点 <b>「发送并总结 ✨」</b> → 可<b>勾选多条发言一起总结</b>；卡片会指出「⚠️ 论据支撑问题」；卡上可「重新生成 / 📝补充 / 🕘历史版本」。</p>
+      <h4>④ 复盘怎么进</h4>
+      <p>双方都点 <b>「🛑 结束讨论」</b> 并确认 → 进入复盘：对话式回放（拖动/倍速/筛选）+ AI 总评与逐段点评。</p>
+      <h4>⑤ 配置真实 AI（可选）</h4>
+      <p>大厅下方 <b>「真实 AI · DeepSeek」</b> 粘贴你的 Key 并保存；Key 只存当前浏览器、双标签共用、<b>不会发送给任何服务器</b>；不配则用内置模拟 AI。</p>
+      <h4>⑥ 数据与隐私</h4>
+      <p>对话与 Key 全在<b>本机浏览器</b>（localStorage），刷新不丢、换设备不共享；页面为纯前端，无后端。</p>
+    </div>
+    <div class="confirm-row"><button class="btn" id="btnHelpClose" style="margin:0;margin-left:auto">我知道了</button></div>
+  </div>
 </div>
 
 <!-- 大厅 -->
@@ -195,19 +248,20 @@ input{font-family:inherit}
 <!-- 讨论区 -->
 <div id="room" class="hidden">
   <div id="danmakuLayer"></div>
+  <div id="guideBar" class="hidden"></div>
   <div id="stream"></div>
   <div id="inputBar">
     <div id="modeSwitch">
-      <button class="mode-chip on" data-mode="discuss">💬 讨论模式</button>
-      <button class="mode-chip" data-mode="danmaku">🎤 弹幕模式</button>
+      <button class="mode-chip on" data-mode="discuss" title="讨论：正文对话，会进 AI 总结与复盘">💬 讨论模式</button>
+      <button class="mode-chip" data-mode="danmaku" title="弹幕：场外吐槽，飘过展示，永不进总结与复盘">🎤 弹幕模式</button>
       <div style="flex:1"></div>
-      <button id="btnEnd">🛑 结束讨论</button>
+      <button id="btnEnd" title="双方都确认后进入复盘">🛑 结束讨论</button>
     </div>
     <div id="inputRow">
       <input id="input" placeholder="输入你的观点…（Enter 发送）">
-      <button class="act-btn hidden" id="btnDanmaku">发弹幕</button>
-      <button class="act-btn" id="btnSend">发送</button>
-      <button class="act-btn" id="btnSendSum">发送并总结 ✨</button>
+      <button class="act-btn hidden" id="btnDanmaku" title="弹幕只作吐槽展示，不参与 AI 总结与复盘">发弹幕</button>
+      <button class="act-btn" id="btnSend" title="发送当前输入为正式讨论">发送</button>
+      <button class="act-btn" id="btnSendSum" title="可勾选多条发言一起让 AI 总结，并指出论据支撑问题">发送并总结 ✨</button>
     </div>
     <div id="statusLine">
       <span id="roomTopic">💬 讨论进行中</span>
@@ -373,6 +427,11 @@ function enterRoom(name, isCreator){
   $('#lobby').classList.add('hidden');
   $('#room').classList.remove('hidden');
   $('#topSub').textContent = '讨论进行中 · 你：'+name+(isCreator?'（发起人）':'');
+  if(!sessionStorage.getItem('dr_guide')){
+    $('#guideBar').innerHTML='💡 <b>怎么玩：</b>左=你 / 右=好友 · 上方切「💬讨论 / 🎤弹幕」 · 发完观点点「发送并总结 ✨」可勾多条一起总结 · 结束点「🛑」双方确认进复盘 · 右上角「❓」可看完整说明';
+    $('#guideBar').classList.remove('hidden');
+    sessionStorage.setItem('dr_guide','1');
+  }
   renderStatus();
   renderStream();
   broadcast({type:'hello', name, ts:now()});
@@ -923,6 +982,26 @@ bc.onmessage=(e)=>{
   }
 };
 
+
+/* ================= 版本与更新检查 ================= */
+const APP_VERSION='2.1.0';
+$('#verBadge').textContent='v'+APP_VERSION;
+$('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
+$('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
+function checkVersion(){
+  fetch('version.json?cb='+Date.now()).then(r=>r.json()).then(j=>{
+    if(j && j.version && j.version!==APP_VERSION){
+      $('#verBadge').textContent='v'+APP_VERSION;
+      $('#updateText').textContent='发现新版本 v'+j.version+'（当前 v'+APP_VERSION+'）'+(j.note?' · '+j.note:'');
+      $('#updateBanner').classList.remove('hidden');
+    }else{
+      $('#verBadge').textContent='v'+APP_VERSION+'（最新）';
+    }
+  }).catch(()=>{ $('#verBadge').textContent='v'+APP_VERSION; });
+}
+$('#verBadge').onclick=checkVersion;
+$('#btnUpdate').onclick=()=>location.reload(true);
+checkVersion();
 
 // 初始化：加载 AI Key 状态
 function showAiErr(msg){
