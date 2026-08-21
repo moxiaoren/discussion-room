@@ -419,6 +419,28 @@ const now=()=>Date.now();
 
 /* ================= 工具：本地+广播双写 ================= */
 function broadcast(obj){ bc.postMessage(obj); }
+
+/* ================= 内容留存（localStorage：刷新/一方先进/掉线重进不丢历史） ================= */
+const STATE_KEY='discuss_state';
+function persistState(){
+  try{
+    localStorage.setItem(STATE_KEY, JSON.stringify({
+      messages:S.messages, summaries:S.summaries,
+      comments:S.comments, verdict:S.verdict, savedAt:Date.now()
+    }));
+  }catch(e){ console.warn('persist fail',e); }
+}
+function loadState(){
+  try{
+    const raw=localStorage.getItem(STATE_KEY);
+    if(!raw) return;
+    const d=JSON.parse(raw);
+    if(Array.isArray(d.messages)) S.messages=d.messages;
+    if(Array.isArray(d.summaries)) S.summaries=d.summaries;
+    if(Array.isArray(d.comments)) S.comments=d.comments;
+    if(d.verdict!=null) S.verdict=d.verdict;
+  }catch(e){ console.warn('load fail',e); }
+}
 function fmtTime(ts){ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
 function fmtTL(ts){ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
 
@@ -551,6 +573,7 @@ function sendDiscuss(content, withSummary){
   const id=uid(), ts=now();
   const m={id,name:S.me.name,ts,content,channel:'discuss',appendTo:null};
   S.messages.push(m);
+  persistState();
   renderStream();
   broadcast({type:'msg',m});
   return id;
@@ -558,6 +581,7 @@ function sendDiscuss(content, withSummary){
 function sendDanmaku(content){
   const m={id:uid(),name:S.me.name,ts:now(),content,channel:'danmaku'};
   S.messages.push(m);
+  persistState();
   renderStream();
   broadcast({type:'msg',m});
   spawnDanmaku(m.content);
@@ -585,6 +609,7 @@ async function genSummary(ids){
     const res = await AI.summarize(text, bg);
     const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||'', rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||''}]};
     S.summaries.push(sm);
+    persistState();
     renderStream();
     broadcast({type:'summary',sm});
   }finally{
@@ -605,6 +630,7 @@ async function redoSummary(smId){
     const res=await AI.summarize(text, bg);
     sm.rev=sm.versions.length;
     sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||''});
+    persistState();
   }finally{
     $('#aiBusy').classList.add('hidden');
   }
@@ -637,6 +663,7 @@ function doInput(fromFill){
     const id=uid(),ts=now();
     const m={id,name:S.me.name,ts,content:val,channel:'discuss',appendTo:fillId};
     S.messages.push(m);
+    persistState();
     $('#input').dataset.fill=''; $('#input').placeholder='输入你的观点…（Enter 发送）';
     renderStream(); broadcast({type:'msg',m});
     $('#input').value='';
@@ -745,6 +772,7 @@ async function ensureComments(){
     if(S.comments.find(c=>c.msgId===sm.messageId)) continue;
     const c={id:uid(),msgId:sm.messageId,atTs:m.ts,style:cm.style,text:cm.text,source:'auto'};
     S.comments.push(c);
+    persistState();
     broadcast({type:'comment',cm:c});
   }
 }
@@ -757,6 +785,7 @@ async function ensureVerdict(){
       '你是两人讨论结束后的复盘者。请基于完整对话写一段综合点评（200字内、中文）：概括讨论主题、双方观点、共识与分歧、值得继续深挖的方向。',
       '讨论主题：'+(S.topic||'未命名')+'\n\n对话记录：\n'+(msgs.join('\n')||'（无讨论消息）'));
     S.verdict=out.trim();
+    persistState();
   }catch(e){ console.warn('deepseek verdict fail',e); showAiErr('总评：'+(e&&e.message||e)); S.verdict=null; }
 }
 document.querySelectorAll('.rnav-btn').forEach(b=>b.onclick=()=>{
@@ -970,16 +999,16 @@ bc.onmessage=(e)=>{
       renderStatus();
       break;
     case 'msg':
-      if(!S.messages.find(x=>x.id===d.m.id)){ S.messages.push(d.m); renderStatus(); renderStream(); }
+      if(!S.messages.find(x=>x.id===d.m.id)){ S.messages.push(d.m); persistState(); renderStatus(); renderStream(); }
       break;
     case 'summary':
-      if(!S.summaries.find(x=>x.id===d.sm.id)){ S.summaries.push(d.sm); renderStream(); }
+      if(!S.summaries.find(x=>x.id===d.sm.id)){ S.summaries.push(d.sm); persistState(); renderStream(); }
       break;
     case 'comment':
-      if(!S.comments.find(x=>x.id===d.cm.id)){ S.comments.push(d.cm); renderStream(); }
+      if(!S.comments.find(x=>x.id===d.cm.id)){ S.comments.push(d.cm); persistState(); renderStream(); }
       break;
     case 'rmcomment':
-      S.comments=S.comments.filter(c=>c.id!==d.id); renderStream();
+      S.comments=S.comments.filter(c=>c.id!==d.id); persistState(); renderStream();
       break;
     case 'endRequest':
       askEnd(); break;
@@ -993,7 +1022,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.2.0';
+const APP_VERSION='2.2.1';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1038,6 +1067,7 @@ $('#btnSaveKey').onclick=()=>{
   $('#aiKey').value='';
 };
 loadAiKeyUI();
+loadState();
 
 // 初始化（若此前已在 localStorage 有口令则提示）
 </script>
