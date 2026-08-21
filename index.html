@@ -209,7 +209,7 @@ input{font-family:inherit}
         <li><b>🤖 AI</b>：可配 DeepSeek Key 让 AI 做真实总结与复盘</li>
       </ul>
       <h4>③ AI 总结怎么用</h4>
-      <p>点 <b>「发送并总结 ✨」</b> → 可<b>勾选多条发言一起总结</b>；卡片会指出「⚠️ 论据支撑问题」；卡上可「重新生成 / 📝补充 / 🕘历史版本」。</p>
+      <p>说了一段后点 <b>「总结 ✨」</b> → 选择 <b>你自己的发言</b>（可多条）一起总结，表达「我说完了、请对方理解回复」；卡片会展示「🎯 在回应什么 / ↔️ 是否跑题 / ⚠️ 论据支撑问题」；可「🧠重新生成 / 📝补充 / 🕘历史版本」。</p>
       <h4>④ 复盘怎么进</h4>
       <p>双方都点 <b>「🛑 结束讨论」</b> 并确认 → 进入复盘：对话式回放（拖动/倍速/筛选）+ AI 总评与逐段点评。</p>
       <h4>⑤ 配置真实 AI（可选）</h4>
@@ -261,7 +261,7 @@ input{font-family:inherit}
       <input id="input" placeholder="输入你的观点…（Enter 发送）">
       <button class="act-btn hidden" id="btnDanmaku" title="弹幕只作吐槽展示，不参与 AI 总结与复盘">发弹幕</button>
       <button class="act-btn" id="btnSend" title="发送当前输入为正式讨论">发送</button>
-      <button class="act-btn" id="btnSendSum" title="可勾选多条发言一起让 AI 总结，并指出论据支撑问题">发送并总结 ✨</button>
+      <button class="act-btn" id="btnSendSum" title="总结我自己的发言（可多条）：表达「我说完了」，AI 结合之前话题判断回应与是否跑题">总结 ✨</button>
     </div>
     <div id="statusLine">
       <span id="roomTopic">💬 讨论进行中</span>
@@ -289,8 +289,8 @@ input{font-family:inherit}
 <!-- 选择纳入总结 -->
 <div id="sumOverlay" class="hidden">
   <div id="sumBox">
-    <h3>🧠 选择要一起总结的发言</h3>
-    <div style="font-size:12px;color:#888;margin-bottom:4px">勾选要纳入本次 AI 总结的发言（默认可全选尚未总结的）· <b>可多条一起总结</b></div>
+    <h3>🧠 总结我的发言</h3>
+    <div style="font-size:12px;color:#888;margin-bottom:4px">只列 <b>你已说的</b> 发言，勾选一起总结（表达「我说完了」，请对方理解并回复）。AI 会结合<b>此前的讨论</b>判断你在回应什么、是否跑题。</div>
     <div id="sumPickList"></div>
     <div class="confirm-row">
       <button class="btn secondary" id="btnSumCancel" style="margin:0">取消</button>
@@ -356,14 +356,15 @@ const AI = {
   },
   /* ---- 模拟回退 ---- */
   _pick(sentences){ return sentences.filter(s=>s.length>=6)||[]; },
-  _mockSummarize(text){
+  _mockSummarize(text,bg){
     const clean = text.replace(/[，。！？、；：\n]+/g,'|').split('|').map(s=>s.trim()).filter(s=>s);
     let core = clean[0]||text.slice(0,20);
     let points = clean.slice(1,4);
     if(points.length===0) points = [text.length>20?text.slice(0,26)+'…':text];
     let issue='';
     if(!/因为|所以|因此|由于|于是|可见|证明|足以说明|主要因为/.test(text)) issue='这段发言提出了观点，但缺少具体论据，论点支撑略显不足。';
-    return {core, points, issue};
+    let focus = bg ? '承接之前的话题，进一步表达自己的观点' : '围绕当前话题表达了自己的观点';
+    return {core, points, issue, focus, offtopic:''};
   },
   _mockComment(sumText){
     const t = sumText;
@@ -373,17 +374,17 @@ const AI = {
     return {style:'good', text:'✨ 这一段表达得很清楚，双方思路有了新进展。'};
   },
   /* ---- 对外（异步） ---- */
-  async summarize(text){
-    if(!this._hasKey()) return this._mockSummarize(text);
+  async summarize(text, bg){
+    if(!this._hasKey()) return this._mockSummarize(text, bg);
     try{
       const out=await this._chat(
-        '你是两人讨论的中立整理师。只根据用户文本提炼总结，不评价、不站队、不修改立场。返回严格 JSON：{"core":"一句核心观点","points":["论据1","论据2"],"issue":"论据支撑问题"}。points 最多 3 条。若论点明显无法被所给论据支撑（论据缺失、答非所问、逻辑断裂、前后矛盾），请用 issue 用一句话明确指出；若支撑充分则 issue 为空字符串。',
-        '待总结的发言段：'+text);
+        '你是两人讨论的中立整理师。我将给你「之前对话背景」和发言者这次要总结的「新发言（可能多条）」。请：1) 提炼新发言核心观点 core 和论据 points（points 最多3条）；2) 判断新发言在回应背景中的哪个话题/哪句观点，用 focus 一句话说明（如"回应你关于做MVP的提议，补充了时间与人力约束"；无明显对应则写"承接对当前话题的进一步阐述"）；3) 判断新发言相对当前话题是否跑题或脱节，跑题则 offtopic 用一句提示，否则空字符串；4) 若论点明显缺乏论据支撑（论据缺失、答非所问、逻辑断裂），用 issue 一句话指出，否则空字符串。不评价、不站队。返回严格 JSON：{"core":"...","points":[...],"issue":"...","focus":"...","offtopic":"..."}。',
+        '之前对话背景：\n'+(bg||'（无）')+'\n\n本次要总结的发言：\n'+text);
       const m=out.match(/\{[\s\S]*\}/);
-      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||'')}; }
+      if(m){ const j=JSON.parse(m[0]); return {core:String(j.core||text.slice(0,20)), points:(Array.isArray(j.points)?j.points:[]).map(String).slice(0,3), issue:String(j.issue||''), focus:String(j.focus||''), offtopic:String(j.offtopic||'')}; }
       const lines=out.split('\n').map(s=>s.trim()).filter(Boolean);
       return {core:lines[0]||text.slice(0,20), points:lines.slice(1,4)};
-    }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text); }
+    }catch(e){ console.warn('deepseek summarize fail', e); showAiErr('总结：'+(e&&e.message||e)); return this._mockSummarize(text, bg); }
   },
   async comment(text){
     if(!this._hasKey()) return this._mockComment(text);
@@ -428,7 +429,7 @@ function enterRoom(name, isCreator){
   $('#room').classList.remove('hidden');
   $('#topSub').textContent = '讨论进行中 · 你：'+name+(isCreator?'（发起人）':'');
   if(!sessionStorage.getItem('dr_guide')){
-    $('#guideBar').innerHTML='💡 <b>怎么玩：</b>左=你 / 右=好友 · 上方切「💬讨论 / 🎤弹幕」 · 发完观点点「发送并总结 ✨」可勾多条一起总结 · 结束点「🛑」双方确认进复盘 · 右上角「❓」可看完整说明';
+    $('#guideBar').innerHTML='💡 <b>怎么玩：</b>左=你 / 右=好友 · 上方切「💬讨论 / 🎤弹幕」 · 说一段话后点「总结 ✨」总结<b>自己的发言</b>（表达说完了，AI 会判断回应与是否跑题） · 结束点「🛑」双方确认进复盘 · 右上角「❓」可看完整说明';
     $('#guideBar').classList.remove('hidden');
     sessionStorage.setItem('dr_guide','1');
   }
@@ -491,7 +492,7 @@ function renderStream(){
     // 若该消息有 summary，紧跟渲染
     const sm = S.summaries.find(x=>x.messageId===m.id);
     if(sm) el.appendChild(renderSummaryCard(sm, m));
-    // AI 阶段点评卡：穿插在「发送并总结」之后
+    // AI 阶段点评卡：穿插在「总结」之后
     const cm = S.comments.find(c=>c.msgId===m.id);
     if(cm) el.appendChild(renderComment(cm));
   });
@@ -520,6 +521,8 @@ function renderSummaryCard(sm, msg){
     '<div class="head">🤖 AI 总结 · '+esc(msg.name||'')+(n>1?'（涵盖 '+n+' 条发言）':'')+'<span class="badge">v'+(sm.rev+1)+'</span></div>'+
     '<div class="body"><span class="field">【核心观点】</span>'+esc(v.core)+'</div>'+
     (v.points&&v.points.length?'<div class="body"><span class="field">【论据 / 细节】</span>'+v.points.map(p=>'<br>· '+esc(p)).join('')+'</div>':'')+
+    (v.focus?'<div class="body"><span class="field">🎯 在回应</span>'+esc(v.focus)+'</div>':'')+
+    (v.offtopic?'<div class="body" style="color:#b45309"><span class="field" style="color:#b45309">↔️ 是否跑题</span>'+esc(v.offtopic)+'</div>':'')+
     (v.issue?'<div class="body" style="color:#be2346"><span class="field" style="color:#be2346">⚠️ 论据支撑问题</span>'+esc(v.issue)+'</div>':'')+
     '<div class="btns">'+
       '<button class="sb-redo" data-redo="'+sm.id+'">🧠 重新生成</button>'+
@@ -572,12 +575,15 @@ async function genSummary(ids){
   const arr = S.messages.filter(m=>ids.includes(m.id)).sort((a,b)=>a.ts-b.ts);
   if(!arr.length) return;
   const anchor = arr[arr.length-1];
+  // 上下文 = 本次总结之前的所有讨论消息（含对方与之前的自己）
+  const bgArr = S.messages.filter(m=>m.channel==='discuss' && !ids.includes(m.id) && m.ts < arr[0].ts).sort((a,b)=>a.ts-b.ts);
+  const bg = bgArr.map(m=>m.name+'：'+m.content).join('\n');
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
     const text = arr.map(m=>m.name+'：'+m.content).join('\n');
-    const res = await AI.summarize(text);
-    const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||''}]};
+    const res = await AI.summarize(text, bg);
+    const sm={id:uid(), ids:arr.map(m=>m.id), messageId:anchor.id, core:res.core, points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||'', rev:0, versions:[{core:res.core, points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||''}]};
     S.summaries.push(sm);
     renderStream();
     broadcast({type:'summary',sm});
@@ -587,15 +593,18 @@ async function genSummary(ids){
 }
 async function redoSummary(smId){
   const sm=S.summaries.find(x=>x.id===smId); if(!sm) return;
-  const arr=S.messages.filter(m=>(sm.ids||[sm.messageId]).includes(m.id)).sort((a,b)=>a.ts-b.ts);
+  const ids=sm.ids||[sm.messageId];
+  const arr=S.messages.filter(m=>ids.includes(m.id)).sort((a,b)=>a.ts-b.ts);
   if(!arr.length) return;
+  const bgArr=S.messages.filter(m=>m.channel==='discuss' && !ids.includes(m.id) && m.ts<arr[0].ts).sort((a,b)=>a.ts-b.ts);
+  const bg=bgArr.map(m=>m.name+'：'+m.content).join('\n');
   const text=arr.map(m=>m.name+'：'+m.content).join('\n');
   if(!AI._hasKey()) showAiErr('未配置 DeepSeek Key，当前为模拟 AI。请在大厅「AI 设置」粘贴 Key 并点保存。');
   $('#aiBusy').classList.remove('hidden');
   try{
-    const res=await AI.summarize(text);
+    const res=await AI.summarize(text, bg);
     sm.rev=sm.versions.length;
-    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||''});
+    sm.versions.push({core:res.core+(AI._hasKey()?'':'（模拟）'), points:res.points, issue:res.issue||'', focus:res.focus||'', offtopic:res.offtopic||''});
   }finally{
     $('#aiBusy').classList.add('hidden');
   }
@@ -645,8 +654,8 @@ $('#btnSend').onclick=()=>doInput();
 function openSumPicker(){
   const covered=new Set();
   S.summaries.forEach(sm=>(sm.ids||[sm.messageId]).forEach(i=>covered.add(i)));
-  const cands=S.messages.filter(m=>m.channel==='discuss'&&!covered.has(m.id)).sort((a,b)=>a.ts-b.ts);
-  if(!cands.length){ showAiErr('当前没有可纳入总结的新发言（未总结的都已生成过卡片）。'); return; }
+  const cands=S.messages.filter(m=>m.channel==='discuss'&&m.name===S.me.name&&!covered.has(m.id)).sort((a,b)=>a.ts-b.ts);
+  if(!cands.length){ showAiErr('你还没有未总结的发言：先在讨论里说说你的观点，再点「总结」来结束你这一轮（只总结自己的发言）。'); return; }
   const sel={};
   $('#sumPickList').innerHTML='';
   cands.forEach(m=>{
@@ -984,7 +993,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.1.0';
+const APP_VERSION='2.2.0';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
