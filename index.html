@@ -61,6 +61,8 @@ input{font-family:inherit}
 .msg-ev{margin:6px 0 0 8px;font-size:12px;color:#333;background:#f6f8ff;border:1px solid #dfe7ff;border-radius:8px;padding:6px 10px;line-height:1.7}
 .msg-ev-close{display:inline-block;margin-top:4px;font-size:11px;color:#999;background:none;border:none;cursor:pointer;padding:0}
 .msg-ev-close:hover{color:#be2346}
+.msg-del-btn{display:inline-block;margin:4px 0 0 8px;font-size:12px;color:#c0392b;background:none;border:none;cursor:pointer;opacity:0;transition:opacity .2s}
+.msg:hover .msg-del-btn{opacity:.7}.msg-del-btn:hover{opacity:1;font-weight:700}
 
 /* ---------- 大厅（进入） ---------- */
 #lobby{flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#eef0ff,#fbeaff)}
@@ -365,6 +367,7 @@ input{font-family:inherit}
     <button class="rnav-btn on" data-rv="playback">🎬 对话式回放</button>
     <button class="rnav-btn" data-rv="evaluate">🧭 AI 评价性复盘</button>
     <div style="flex:1"></div>
+    <button class="btn secondary hidden" id="btnReviewBack" style="width:auto;margin:0;padding:7px 14px">← 返回</button>
     <button class="btn secondary" id="btnExport" style="width:auto;margin:0;padding:7px 14px">📄 导出复盘网页</button>
   </div>
   <div id="playerPane">
@@ -584,7 +587,7 @@ function renderHistory(){
     const d=document.createElement('div'); d.className='hist-item';
     d.innerHTML='<div class="hist-tt"><span>'+esc(h.title)+'</span><span class="ts">'+fmtHistTime(h.endTs)+' · '+(h.me||'我')+' · '+(h.msgCount||0)+' 条</span></div>'+
       '<div class="hist-btns"><button class="mini-btn2" data-rv="'+i+'">👁 完整复盘</button><button class="mini-btn2 warn" data-hd="'+i+'">删除</button><button class="mini-btn2 cloud'+(ghSavedIds().includes(h.id)?' saved':'')+'" data-gh="'+i+'">'+(ghSavedIds().includes(h.id)?'✅ 已存':'☁️ 存到GitHub')+'</button></div>';
-    d.querySelector('[data-rv]').onclick=()=>openReviewFor(h);
+    d.querySelector('[data-rv]').onclick=()=>openReviewArchive(h);
     d.querySelector('[data-hd]').onclick=()=>{ if(!confirm('删除这条历史存档？此操作不可恢复。')) return; const l=histList(); l.splice(i,1); localStorage.setItem(HIST_KEY, JSON.stringify(l)); renderHistory(); };
     d.querySelector('[data-gh]').onclick=()=>cmdGhSave(h, d.querySelector('[data-gh]'));
     el.appendChild(d);
@@ -658,6 +661,7 @@ function renderStream(){
     d.dataset.ts=m.ts;
     const appendTag = m.appendTo ? '<span class="appendTag">· 补充</span>' : '';
     const meta = '<div class="meta">'+(isMe?'':'')+(m.name||'')+' <span class="ts">'+fmtTime(m.ts)+'</span>'+appendTag+'</div>';
+    const delBtn = (m.channel==='discuss'&&isMe) ? '<button class="msg-del-btn" data-id="'+m.id+'" title="撤回这条消息（其 AI 总结/点评一并删除）">✕ 撤回</button>' : '';
     const evBtn = (m.channel==='discuss') ? '<button class="msg-ev-btn" data-id="'+m.id+'" title="为这段话生成证据检索指引">🔍 证据</button>' : '';
     const evCard = (m.evidence && ((m.evidence.sourceTypes&&m.evidence.sourceTypes.length)||(m.evidence.keywords&&m.evidence.keywords.length)))
       ? '<div class="msg-ev"><b>🔍 证据指引</b>'+
@@ -665,7 +669,7 @@ function renderStream(){
         (m.evidence.keywords&&m.evidence.keywords.length?'<br><b>推荐关键词：</b>'+m.evidence.keywords.map(esc).join('、'):'')+
         '<div style="color:#999;font-size:11px;margin-top:3px">仅给方向与关键词，请自行查证。</div>'+
         '<button class="msg-ev-close" data-id="'+m.id+'">✕ 收起</button></div>' : '';
-    d.innerHTML = meta + '<div class="bubble">'+esc(m.content)+'</div>'+ evBtn + evCard;
+    d.innerHTML = meta + '<div class="bubble">'+esc(m.content)+'</div>'+ delBtn + evBtn + evCard;
     el.appendChild(d);
     // 若该消息有 summary，紧跟渲染
     const sm = S.summaries.find(x=>x.messageId===m.id);
@@ -875,11 +879,22 @@ $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter') doInput(); });
 
 /* 消息级「证据引导」事件委托 */
 document.addEventListener('click',(e)=>{
+  const db=e.target.closest('.msg-del-btn');
+  if(db){ delMsg(db.dataset.id); return; }
   const btn=e.target.closest('.msg-ev-btn');
   if(btn){ genMsgEvidence(btn.dataset.id); return; }
   const cl=e.target.closest('.msg-ev-close');
   if(cl){ const mm=S.messages.find(x=>x.id===cl.dataset.id); if(mm){ mm.evidence=null; persistState(); renderStream(); } }
 });
+function delMsg(id){
+  const m=S.messages.find(x=>x.id===id); if(!m) return;
+  if(!confirm('撤回这条消息？（其 AI 总结/点评也会一并删除）')) return;
+  S.messages=S.messages.filter(x=>x.id!==id);
+  S.summaries=S.summaries.filter(sm=>!(sm.ids||[sm.messageId]).includes(id));
+  S.comments=S.comments.filter(c=>c.msgId!==id);
+  persistState(); renderStream(); renderStatus();
+  broadcast({type:'rmmsg', id});
+}
 async function genMsgEvidence(id){
   const m=S.messages.find(x=>x.id===id); if(!m) return;
   $('#aiBusy').classList.remove('hidden');
@@ -1200,11 +1215,44 @@ function buildReviewHTML(data){
     '<button class="dl" onclick="window.print()">🖨 打印 / 另存为 PDF</button></body></html>';
   return html;
 }
-function openReviewFor(h){
-  const w=window.open(); if(!w) return;
-  w.document.write(buildReviewHTML({title:h.title, me:h.me, messages:h.messages, summaries:h.summaries, comments:h.comments, verdict:h.verdict, exportedAt:h.endTs}));
-  w.document.close();
+var histView=false, histBackup=null; // 历史复盘（只读复刻）状态
+function snapshotS(){
+  return {me:Object.assign({},S.me), peerConfirmed:S.peerConfirmed, inRoom:S.inRoom, messages:S.messages, summaries:S.summaries, comments:S.comments, verdict:S.verdict, danmakuActive:S.danmakuActive, review:Object.assign({},S.review), topic:S.topic};
 }
+function loadReviewData(h){
+  S.messages=(h.messages||[]).slice();
+  S.summaries=(h.summaries||[]).slice();
+  S.comments=(h.comments||[]).slice();
+  S.verdict=(h.verdict===undefined||h.verdict===null)?null:h.verdict;
+  S.topic=h.title||'';
+  S.review=Object.assign({currentTs:0,playing:false,spd:1,filter:'all',playingStart:0}, S.review);
+  buildTimeline(); renderPlayback(); renderEvaluate();
+}
+function openReviewArchive(h){
+  histBackup=snapshotS();
+  histView=true;
+  loadReviewData(h);
+  $('#room').classList.add('hidden');
+  $('#reviewView').classList.remove('hidden');
+  $('#topSub').textContent='历史复盘 · '+(h.title||'');
+  rvTab='playback';
+  document.querySelectorAll('.rnav-btn').forEach(x=>x.classList.toggle('on',x.dataset.rv==='playback'));
+  $('#playerPane').classList.remove('hidden'); $('#evalPane').classList.add('hidden');
+  $('#btnReviewBack').classList.remove('hidden');
+  $('#btnExport').textContent='📄 导出本存档';
+}
+function closeReviewArchive(){
+  if(!histBackup) return;
+  const b=histBackup;
+  S.me=b.me; S.peerConfirmed=b.peerConfirmed; S.inRoom=b.inRoom; S.messages=b.messages; S.summaries=b.summaries; S.comments=b.comments; S.verdict=b.verdict; S.danmakuActive=b.danmakuActive; S.review=b.review; S.topic=b.topic;
+  histBackup=null; histView=false;
+  $('#btnReviewBack').classList.add('hidden');
+  $('#btnExport').textContent='📄 导出复盘网页';
+  $('#reviewView').classList.add('hidden');
+  if(S.inRoom){ $('#room').classList.remove('hidden'); renderStatus(); renderStream(); }
+  else $('#lobby').classList.remove('hidden');
+}
+$('#btnReviewBack').onclick=closeReviewArchive;
 function exportReview(){
   const html=buildReviewHTML({title:'复盘 · '+fmtTL(now()), me:S.me.name, messages:S.messages, summaries:S.summaries, comments:S.comments, verdict:S.verdict, exportedAt:Date.now()});
   const w=window.open(); if(w){ w.document.write(html); w.document.close(); }
@@ -1212,6 +1260,7 @@ function exportReview(){
 
 /* ================= BroadcastChannel 接收 ================= */
 bc.onmessage=(e)=>{
+  if(histView) return; // 历史复盘视图期间忽略广播，避免污染
   const d=e.data; if(!d) return;
   switch(d.type){
     case 'hello':
@@ -1230,6 +1279,11 @@ bc.onmessage=(e)=>{
     case 'rmcomment':
       S.comments=S.comments.filter(c=>c.id!==d.id); persistState(); renderStream();
       break;
+    case 'rmmsg':
+      S.messages=S.messages.filter(x=>x.id!==d.id);
+      S.summaries=S.summaries.filter(sm=>!(sm.ids||[sm.messageId]).includes(d.id));
+      S.comments=S.comments.filter(c=>c.msgId!==d.id);
+      persistState(); renderStream(); break;
     case 'endRequest':
       askEnd(); break;
     case 'endConfirm':
@@ -1242,7 +1296,7 @@ bc.onmessage=(e)=>{
 
 
 /* ================= 版本与更新检查 ================= */
-const APP_VERSION='2.5.0';
+const APP_VERSION='2.6.0';
 $('#verBadge').textContent='v'+APP_VERSION;
 $('#btnHelp').onclick=()=>$('#helpOverlay').classList.remove('hidden');
 $('#btnHelpClose').onclick=()=>$('#helpOverlay').classList.add('hidden');
@@ -1349,7 +1403,7 @@ async function renderCloudList(){
     const name=(f.name||'').replace(/\.json$/i,'');
     d.innerHTML='<div class="hist-tt"><span>'+esc(name.slice(0,22))+'</span><span class="ts">☁️ 云端</span></div>'+
       '<div class="hist-btns"><button class="mini-btn2" data-cv>👁 查看复盘</button></div>';
-    d.querySelector('[data-cv]').onclick=async()=>{ try{ const h=await ghReadCloud(f.path||f.name); openReviewFor(h); }catch(e){ alert('云端读取失败：'+e.message); } };
+    d.querySelector('[data-cv]').onclick=async()=>{ try{ const h=await ghReadCloud(f.path||f.name); openReviewArchive(h); }catch(e){ alert('云端读取失败：'+e.message); } };
     el.appendChild(d);
   });
 }
